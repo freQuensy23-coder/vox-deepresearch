@@ -1,4 +1,35 @@
-# 🦌 DeerFlow - 2.0
+# Vox DeepResearch
+
+Vox DeepResearch is a fork of [DeerFlow](https://github.com/bytedance/deer-flow)
+for agent-led research into public Telegram communities and discussions through
+Vox. It includes the full DeerFlow application, a
+[research guide](skills/public/telegram-research/SKILL.md), and a
+[Python CLI](skills/public/telegram-research/references/vox-tools.md) for individual
+Vox read operations.
+
+The agent understands the question, proposes keywords, reads matching chats,
+then expands its search using vocabulary from messages, references to other
+groups, and key participants' observed public activity. It repeats this process
+until it has enough evidence to answer. The agent makes the research decisions;
+the CLI retrieves data.
+
+Follow [Quick Start](#quick-start) to configure a model and start the application.
+Supply `VOX_API_KEY` through the run's `config.context.secrets` so the skill can
+access it inside the sandbox; a Gateway `.env` value alone is not forwarded.
+Example request:
+
+```text
+/telegram-research Найди чаты, где студенты обсуждают подработку
+```
+
+[Validation notes](skills/public/telegram-research/evals/live-check-2026-10-09.md)
+record the live runs and what they do and do not demonstrate. Local credentials
+and raw research outputs are not included in this repository.
+
+The application documentation below is inherited from DeerFlow. Upstream
+attribution and the [MIT license](LICENSE) are preserved.
+
+## DeerFlow application
 
 English | [中文](./README_zh.md) | [日本語](./README_ja.md) | [Français](./README_fr.md) | [Русский](./README_ru.md) | [Português](./README_pt.md)
 
@@ -51,7 +82,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
 
 ## Table of Contents
 
-- [🦌 DeerFlow - 2.0](#-deerflow---20)
+- [Vox DeepResearch](#vox-deepresearch)
   - [Official Website](#official-website)
   - [Sister Projects](#sister-projects)
   - [Coding Plan from ByteDance Volcengine](#coding-plan-from-bytedance-volcengine)
@@ -124,7 +155,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
 If you use Claude Code, Codex, Cursor, Windsurf, or another coding agent, you can hand it the setup instructions in one sentence:
 
 ```text
-Help me clone DeerFlow if needed, then bootstrap it for local development by following https://raw.githubusercontent.com/bytedance/deer-flow/main/Install.md
+Help me clone Vox DeepResearch if needed, then bootstrap it for local development by following https://raw.githubusercontent.com/freQuensy23-coder/vox-deepresearch/main/Install.md
 ```
 
 That prompt is intended for coding agents. It tells the agent to clone the repo if needed, choose Docker when available, and stop with the exact next command plus any missing config the user still needs to provide.
@@ -147,16 +178,16 @@ For Google's official Gemini OpenAI-compatible endpoint, use the
 For MindIE XML tool calls, see the
 [argument parsing and newline compatibility guide](backend/docs/CONFIGURATION.md#mindie-xml-tool-arguments).
 
-1. **Clone the DeerFlow repository**
+1. **Clone the Vox DeepResearch repository**
 
    ```bash
-   git clone https://github.com/bytedance/deer-flow.git
-   cd deer-flow
+   git clone https://github.com/freQuensy23-coder/vox-deepresearch.git
+   cd vox-deepresearch
    ```
 
 2. **Run the setup wizard**
 
-   From the project root directory (`deer-flow/`), run:
+   From the project root directory (`vox-deepresearch/`), run:
 
    ```bash
    make setup
@@ -322,6 +353,8 @@ For MindIE XML tool calls, see the
    ```
 
    - Codex CLI reads `~/.codex/auth.json`
+   - Codex profiles forward an optional `service_tier` such as `priority`. For a model that requires reasoning even during background summarization, set `none_effort_fallback` to its lowest supported level, for example `low`; this replaces only `none`, preserving other effort choices. Without this setting the existing `none` behavior stays unchanged.
+   - Codex `stream_idle_timeout` defaults to 180 seconds without a data event. Keepalive comments do not keep a stalled request open forever. Transient transport failures retry within `retry_max_attempts`; completed responses and terminal provider errors are not replayed.
    - Codex function tools preserve explicit `strict: true` or `strict: false` in wrapped or flat dictionary definitions. Missing or null settings keep the provider default. `bind_tools` applies the same conversion to dictionaries and `BaseTool` schemas.
    - Completed Codex responses still return their text and tool calls when token usage is null, omitted, or empty; usage metadata remains unavailable.
    - The Codex model provider returns completed responses without waiting for the SSE connection to close. Failed or incomplete responses report the provider's error or reason; partial output is not returned as a successful answer. Non-object error details are reported as text.
@@ -1202,6 +1235,27 @@ Skills are what make DeerFlow do *almost anything*.
 A standard Agent Skill is a structured capability module — a Markdown file that defines a workflow, best practices, and references to supporting resources. DeerFlow ships with built-in skills for research, report generation, slide creation, web pages, image and video generation, and more. But the real power is extensibility: add your own skills, replace the built-in ones, or combine them into compound workflows.
 
 Skills are loaded progressively — only when the task needs them, not all at once. This keeps the context window lean and makes DeerFlow work well even with token-sensitive models.
+
+The built-in [Telegram research skill](skills/public/telegram-research/SKILL.md)
+guides public-community discovery and discussion research through Vox. It starts
+with keywords and object context, reads candidate chats, then expands through
+links and participants' observed public activity. The agent chooses each next
+step, adds vocabulary from actual messages, and repeats expansion across the
+growing set of chats until it can support an answer. It identifies substantive
+key participants and reads promising destinations before recommending them.
+Keyword guidance covers task relevance, participants' language, search scope,
+and the usefulness of returned messages rather than raw match counts. Missing links
+do not block research: it can continue through authors and keywords. The bundled
+Python CLI provides individual read operations. Reads accept
+streaming search responses, including progress and a final result with coverage
+metadata. They also accept
+`--public-card` to reuse a previously retrieved group card without repeating its
+network lookup; the card must confirm the same public group. Supply
+`VOX_API_KEY` through the run's `config.context.secrets` for sandbox use (a
+Gateway `.env` value alone is not forwarded). See the
+[command reference](skills/public/telegram-research/references/vox-tools.md) for
+setup and coverage limits. Activate it with, for example,
+`/telegram-research Найди чаты, где студенты обсуждают подработку`.
 
 When deferred skill discovery is enabled, `describe_skill` ranks installed skills by bounded, Unicode-normalized intent-term coverage across names and descriptions. Natural multi-term requests can therefore find a relevant skill without requiring one exact phrase, while exact `select:` and required-name `+prefix` lookups remain available. Ranked searches use up to 256 characters and return up to five results; exact `select:` lists are not truncated and return all requested catalog matches.
 

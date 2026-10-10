@@ -1,6 +1,6 @@
-# DeerFlow Install
+# Vox DeepResearch Install
 
-This file is for coding agents. If the DeerFlow repository is not already cloned and open, clone `https://github.com/bytedance/deer-flow.git` first, then continue from the repository root.
+This file is for coding agents. Vox DeepResearch is a DeerFlow fork. If this repository is not already cloned and open, clone `https://github.com/freQuensy23-coder/vox-deepresearch.git` first, then continue from the repository root.
 
 ## Goal
 
@@ -35,7 +35,7 @@ Consider the setup successful when all of the following are true:
 
 ## Steps
 
-- If the current directory is not the DeerFlow repository root, clone `https://github.com/bytedance/deer-flow.git` if needed, then change into the repository root.
+- If the current directory is not the Vox DeepResearch repository root, clone `https://github.com/freQuensy23-coder/vox-deepresearch.git` if needed, then change into the repository root.
 - Confirm the current directory is the DeerFlow repository root by checking that `Makefile`, `backend/`, `frontend/`, and `config.example.yaml` exist.
 - Detect whether `config.yaml` already exists.
 - If `config.yaml` does not exist, run `make config`.

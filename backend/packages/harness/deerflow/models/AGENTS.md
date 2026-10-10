@@ -109,6 +109,20 @@ coverage: `tests/test_codex_tool_strict.py`.
 
 ### Codex SSE termination (`packages/harness/deerflow/models/openai_codex_provider.py`)
 
+Codex profiles may set `service_tier` and `none_effort_fallback`; both are provider
+fields, not ignored configuration extras. The fallback replaces only a requested
+`reasoning_effort=none` on the wire, including background summarization calls.
+Choose a value supported by the configured model. Omission preserves the legacy
+`none` payload; enabled reasoning levels are unchanged. Do not infer these
+capabilities from a model-name substring.
+
+`stream_idle_timeout` is positive and defaults to 180 seconds. It bounds read
+silence and elapsed time without a parsed SSE data event; keepalive comments do
+not extend that deadline. Transport interruptions and stalled streams retry with
+bounded backoff within `retry_max_attempts`. Terminal SSE errors remain
+non-retriable. Profile-to-wire and transport regressions are in
+`tests/test_codex_profile_options.py`.
+
 Completed responses with null, omitted, or empty `usage` retain their text,
 reasoning, and tool calls. Normalize unavailable usage to the existing empty
 mapping fallback while keeping `AIMessage.usage_metadata` as `None`; populated

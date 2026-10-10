@@ -21,6 +21,7 @@ from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from pydantic import Field
 
 from deerflow.models.credential_loader import CodexCliCredential, load_codex_cli_credential
 
@@ -75,6 +76,10 @@ class CodexChatModel(BaseChatModel):
 
     model: str = "gpt-5.4"
     reasoning_effort: str = "medium"
+    service_tier: str | None = Field(default=None, min_length=1)
+    # Operator-selected minimum for models that cannot disable reasoning.
+    none_effort_fallback: str | None = Field(default=None, min_length=1)
+    stream_idle_timeout: float = Field(default=180.0, gt=0)
     retry_max_attempts: int = MAX_RETRIES
     _access_token: str = ""
     _account_id: str = ""
@@ -236,8 +241,11 @@ class CodexChatModel(BaseChatModel):
             "input": input_items,
             "store": False,
             "stream": True,
-            "reasoning": {"effort": self.reasoning_effort, "summary": "detailed"} if self.reasoning_effort != "none" else {"effort": "none"},
+            "reasoning": {"effort": self.reasoning_effort, "summary": "detailed"} if self.reasoning_effort != "none" else {"effort": self.none_effort_fallback or "none"},
         }
+
+        if self.service_tier is not None:
+            payload["service_tier"] = self.service_tier
 
         if tools:
             payload["tools"] = self._convert_tools(tools)
@@ -264,6 +272,13 @@ class CodexChatModel(BaseChatModel):
                     time.sleep(wait_ms / 1000)
                 else:
                     raise
+            except (httpx.TransportError, TimeoutError) as e:
+                last_error = e
+                if attempt >= self.retry_max_attempts:
+                    raise
+                wait_seconds = 2 * (1 << (attempt - 1))
+                logger.warning("Codex transport interrupted (%s), retrying %s/%s after %ss", type(e).__name__, attempt, self.retry_max_attempts, wait_seconds)
+                time.sleep(wait_seconds)
             except Exception:
                 raise
 
@@ -274,13 +289,18 @@ class CodexChatModel(BaseChatModel):
         completed_response = None
         streamed_output_items: dict[int, dict[str, Any]] = {}
 
-        with httpx.Client(timeout=300) as client:
+        timeout = httpx.Timeout(connect=30, read=self.stream_idle_timeout, write=60, pool=30)
+        with httpx.Client(timeout=timeout) as client:
             with client.stream("POST", f"{CODEX_BASE_URL}/responses", headers=headers, json=payload) as resp:
                 resp.raise_for_status()
+                last_event_at = time.monotonic()
                 for line in resp.iter_lines():
                     data = self._parse_sse_data_line(line)
                     if not data:
+                        if time.monotonic() - last_event_at > self.stream_idle_timeout:
+                            raise TimeoutError(f"no Codex stream events for {self.stream_idle_timeout:g}s")
                         continue
+                    last_event_at = time.monotonic()
 
                     event_type = data.get("type")
                     if event_type == "response.output_item.done":
