@@ -297,6 +297,30 @@ def trim_messages(messages, max_chars):
     return messages
 
 
+def summarize_groups(messages):
+    """Index this response by chat without fetching data or ranking relevance."""
+    groups = {}
+    authors = {}
+    for index, message in enumerate(messages):
+        gid = message.get("group_id")
+        if gid is None:
+            continue
+        if gid not in groups:
+            groups[gid] = {"group_id": gid, "message_count": 0, "message_indices": []}
+            authors[gid] = set()
+        group = groups[gid]
+        for field in ("group_name", "group_alias", "group_url"):
+            if message.get(field) and field not in group:
+                group[field] = message[field]
+        group["message_count"] += 1
+        group["message_indices"].append(index)
+        if message.get("user_id") is not None:
+            authors[gid].add(message["user_id"])
+    for gid, group in groups.items():
+        group["unique_author_count"] = len(authors[gid])
+    return sorted(groups.values(), key=lambda group: -group["message_count"])
+
+
 def cmd_search(args):
     include = [
         str(public_group(value, args.public_card)["id"]) for value in args.include or []
@@ -327,6 +351,8 @@ def cmd_search(args):
         [m for m in data["messages"] if m.get("is_private") is not True], args.max_chars
     )
     data["returned_count"] = len(data["messages"])
+    data["group_summary"] = summarize_groups(data["messages"])
+    data["ungrouped_count"] = sum(m.get("group_id") is None for m in data["messages"])
     data["public_access"] = "check_group_cards"
     return data
 
@@ -498,7 +524,7 @@ def main(argv=None):
         "search", help="keyword discovery; verify candidate group cards"
     )
     search.add_argument("query", type=query_value)
-    search.add_argument("--limit", type=integer(1, 50), default=30)
+    search.add_argument("--limit", type=integer(1, 10000), default=200)
     search.add_argument("--from", dest="from_date", type=date_value)
     search.add_argument("--to", dest="to_date", type=date_value)
     search.add_argument("--order", choices=["desc", "asc"], default="desc")

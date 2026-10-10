@@ -166,7 +166,7 @@ def test_search_retries_a_stream_closed_after_progress(transport, capsys):
         ["search", "x", "--phrase"],
         ["search", "x", "--lang", "ru"],
         ["search", "x", "--limit", "0"],
-        ["search", "x", "--limit", "51"],
+        ["search", "x", "--limit", "10001"],
         ["search", "x" * 50],
         ["search", "x", "--from", "2026-10-32"],
         ["search", "x", "--from", "2026-10-01", "--to", "2026-09-01"],
@@ -527,3 +527,57 @@ def test_saved_card_must_confirm_public_access_for_the_same_group(
     with pytest.raises(SystemExit):
         invoke(["posts", "-10012345", "--public-card", str(path)])
     assert not requests
+
+
+@pytest.mark.parametrize("limit", [None, 200, 10000])
+def test_search_large_limit_preserves_messages_and_groups(transport, capsys, limit):
+    requests, responses = transport
+    messages = [
+        {
+            "id": i,
+            "group_id": -10012345 if i < 150 else -10012346,
+            "user_id": i % 7,
+            "text": f"message {i}",
+            "group_name": "Synthetic group",
+            "group_url": "https://t.me/example_chat",
+        }
+        for i in range(200)
+    ]
+    responses.append({"messages": messages, "count": 999, "stop_reason": "timeout"})
+    args = [] if limit is None else ["--limit", str(limit)]
+    out = run_cli(capsys, "search", "подработка", *args)
+    assert parse_qs(urlsplit(requests[0].full_url).query)["limit"] == [
+        str(limit or 200)
+    ]
+    assert out["messages"] == messages
+    assert out["returned_count"] == 200
+    assert out["count"] == 999 and out["stop_reason"] == "timeout"
+    groups = out["group_summary"]
+    assert [g["message_count"] for g in groups] == [150, 50]
+    assert groups[0]["group_id"] == -10012345
+    assert groups[0]["unique_author_count"] == 7
+    assert groups[0]["group_name"] == "Synthetic group"
+    assert groups[0]["message_indices"] == list(range(150))
+    assert groups[1]["message_indices"] == list(range(150, 200))
+    assert len(requests) == 1  # aggregation must not trigger more API calls
+
+
+def test_search_summary_counts_only_retained_messages(transport, capsys):
+    _, responses = transport
+    responses.append(
+        {
+            "messages": [
+                {"id": 1, "group_id": -10012345, "user_id": 42},
+                {"id": 2, "group_id": -10012345, "user_id": 42},
+                {"id": 3, "group_id": -10012345},
+                {"id": 4, "group_id": -10099999, "is_private": True},
+                {"id": 5, "text": "no group id"},
+            ]
+        }
+    )
+    out = run_cli(capsys, "search", "work")
+    assert len(out["group_summary"]) == 1
+    assert out["group_summary"][0]["message_count"] == 3
+    assert out["group_summary"][0]["unique_author_count"] == 1
+    assert out["ungrouped_count"] == 1
+    assert out["returned_count"] == 4
