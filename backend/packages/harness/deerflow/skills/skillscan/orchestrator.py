@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import ast
 import io
-import json
 import logging
 import posixpath
 import re
@@ -120,11 +119,11 @@ _PLACEHOLDER_VALUES = {"", "x", "xx", "xxx", "xxxx", "changeme", "change-me", "e
 # analyzed from its AST instead, because a regex cannot tell an annotation from a value.
 # The key may be quoted, so that JSON (`{"api_key": "..."}`) reads the same as the YAML,
 # `.env`, `.ini` and shell spellings of the same binding.
-# Capture the complete binding, including separator-delimited prefixes such as
-# `access_token`, `client_secret`, and `MY_API_KEY`, to distinguish exact usage
-# counters from credentials. Names like `tokenizer` and `secretive` stay quiet.
-_SECRET_ASSIGNMENT_RE = re.compile(r"(?im)(?<![A-Za-z0-9_-])((?:[A-Za-z0-9_-]*[_-])?(?:token|password|passwd|api[_-]?key|secret|credential)s?)\b[\"']?\s*[:=]\s*[\"']?([^\"'\s#]+)")
-_TOKEN_USAGE_FIELDS = {"tokens", "total_tokens", "input_tokens", "output_tokens", "prompt_tokens", "completion_tokens", "cached_tokens"}
+# The leading guard is "not preceded by an alphanumeric" rather than `\b`: a separator
+# may introduce the credential word (`access_token`, `client_secret`, `MY_API_KEY`),
+# which `\b` cannot match because `_` is a word character. A run of letters before the
+# word (`tokenizer`, `secretive`) still stays quiet, so this is not a blanket match.
+_SECRET_ASSIGNMENT_RE = re.compile(r"(?im)(?<![A-Za-z0-9])(token|password|passwd|api[_-]?key|secret|credential)s?\b[\"']?\s*[:=]\s*[\"']?([^\"'\s#]+)")
 _SECRET_ASSIGNMENT_NAME_RE = re.compile(r"(?i)^(?:token|password|passwd|api[_-]?key|secret|credential)s?$")
 _SECRET_TOKEN_PATTERNS = tuple(
     re.compile(pattern)
@@ -381,28 +380,10 @@ def _scan_secrets(rel_path: str, text: str) -> list[SecurityFinding]:
     return findings
 
 
-def _is_numeric_token_usage(match: re.Match[str], text: str) -> bool:
-    if match.group(1).lower() not in _TOKEN_USAGE_FIELDS:
-        return False
-    if re.fullmatch(r"[+-]?[0-9]+(?:\.[0-9]+)?[,}\]]*", match.group(2)):
-        return True
-    # Benchmark summaries store numeric statistics under the same field. Only
-    # accept a bounded, flat statistics object; credential maps stay reportable.
-    try:
-        value, _ = json.JSONDecoder().raw_decode(text[match.start(2) : match.start(2) + 512])
-    except (ValueError, RecursionError):
-        return False
-    return isinstance(value, dict) and bool(value) and value.keys() <= {"mean", "stddev", "min", "max"} and all(type(item) in (int, float) for item in value.values())
-
-
 def _scan_secret_assignments_by_text(rel_path: str, text: str) -> list[SecurityFinding]:
     """``name[:=]value`` sweep for line-oriented text, and for Python that will not parse."""
     for match in _SECRET_ASSIGNMENT_RE.finditer(text):
         value = match.group(2).strip()
-        # Usage counts in JSON examples are numbers, not authentication tokens.
-        # Keep other bindings (including numeric passwords) and nonnumeric values.
-        if _is_numeric_token_usage(match, text):
-            continue
         if not _looks_like_placeholder(value):
             return [_finding_from_match("secret-env-assignment", rel_path, text, match)]
     return []

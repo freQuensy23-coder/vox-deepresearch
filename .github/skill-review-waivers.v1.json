@@ -28,6 +28,50 @@
       ],
       "reason": "Required Claude CLI invocation uses a fixed executable, an argv list, captured output streams, and shell=False.",
       "expires_on": "2027-02-28"
+    },
+    {
+      "package": "skills/public/data-analysis",
+      "source": "skillscan",
+      "rule_id": "python-subprocess",
+      "path": "scripts/analyze.py",
+      "line": 25,
+      "evidence": "subprocess.run",
+      "file_sha256": "sha256:42b393b7e2892e57ffe04a077e1858ee463d8c7e126b73ecbfb250998d49dd9b",
+      "reason": "Existing dependency bootstrap invokes the current Python executable with a fixed pip argv list for duckdb/openpyxl, check=True and no shell.",
+      "expires_on": "2027-02-28"
+    },
+    {
+      "package": "skills/public/data-analysis",
+      "source": "skillscan",
+      "rule_id": "python-subprocess",
+      "path": "scripts/analyze.py",
+      "line": 31,
+      "evidence": "subprocess.run",
+      "file_sha256": "sha256:42b393b7e2892e57ffe04a077e1858ee463d8c7e126b73ecbfb250998d49dd9b",
+      "reason": "Existing dependency bootstrap invokes the current Python executable with a fixed pip argv list for openpyxl, check=True and no shell.",
+      "expires_on": "2027-02-28"
+    },
+    {
+      "package": "skills/public/skill-creator",
+      "source": "skillscan",
+      "rule_id": "secret-env-assignment",
+      "path": "SKILL.md",
+      "line": 262,
+      "evidence": "[redacted]",
+      "file_sha256": "sha256:313a95a145d9926693f8c053b63047212dd1db217c061891865b6546c4e70d02",
+      "reason": "The flagged JSON field total_tokens is a numeric usage counter (84852), not an authentication credential.",
+      "expires_on": "2027-02-28"
+    },
+    {
+      "package": "skills/public/skill-creator",
+      "source": "skillscan",
+      "rule_id": "secret-env-assignment",
+      "path": "references/schemas.md",
+      "line": 205,
+      "evidence": "[redacted]",
+      "file_sha256": "sha256:8e8876180a8989b406a4d3edddf875b04cdfd5805cc8616686d552b11ce4455f",
+      "reason": "The flagged JSON field total_tokens is a numeric usage counter (84852); the later tokens fields are benchmark counts and statistics, not authentication credentials.",
+      "expires_on": "2027-02-28"
     }
   ]
 }

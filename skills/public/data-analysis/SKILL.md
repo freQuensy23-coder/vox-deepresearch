@@ -20,11 +20,6 @@ This skill analyzes user-uploaded Excel/CSV files using DuckDB — an in-process
 
 ## Workflow
 
-The script requires `duckdb` and `openpyxl` in its Python environment. If either
-is missing, it exits with a setup command; it does not install packages during
-import. Prepare the environment with `python -m pip install duckdb openpyxl`
-before running the analysis.
-
 ### Step 1: Understand Requirements
 
 When a user uploads data files and requests analysis, identify:

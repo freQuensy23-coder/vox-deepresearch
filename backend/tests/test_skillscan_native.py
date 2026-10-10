@@ -1890,40 +1890,6 @@ def test_secret_assignment_ignores_python_runtime_composed_value(tmp_path: Path)
     assert _secret_assignments(_scan_python_sample(tmp_path, source)) == []
 
 
-@pytest.mark.parametrize("name", ["total_tokens", "input_tokens", "output_tokens", "prompt_tokens", "completion_tokens", "cached_tokens"])
-def test_numeric_token_usage_is_not_a_credential(tmp_path: Path, name: str) -> None:
-    skill_dir = tmp_path / "demo-skill"
-    _write_skill(skill_dir, f'```json\n{{"{name}": 84852, "duration_ms": 23332}}\n```\n')
-    assert _secret_assignments(scan_skill_dir(skill_dir)["findings"]) == []
-
-
-@pytest.mark.parametrize("assignment", ['"total_tokens": "literal-credential"', '"access_token": 84852', '"access_total_tokens": 84852', "MY_API_KEY=literal-credential"])
-def test_token_usage_exception_preserves_credential_detection(tmp_path: Path, assignment: str) -> None:
-    skill_dir = tmp_path / "demo-skill"
-    _write_skill(skill_dir, assignment + "\n")
-    assert _secret_assignments(scan_skill_dir(skill_dir)["findings"])
-
-
-def test_usage_counter_does_not_hide_later_secret(tmp_path: Path) -> None:
-    skill_dir = tmp_path / "demo-skill"
-    _write_skill(skill_dir, '"total_tokens": 84852,\nACCESS_TOKEN=literal-credential\n')
-    assert _secret_assignments(scan_skill_dir(skill_dir)["findings"])
-
-
-@pytest.mark.parametrize("value", ["3800", '"+1700"', '{"mean": 3800, "stddev": 400, "min": 3200, "max": 4100}'])
-def test_numeric_benchmark_token_statistics_are_not_credentials(tmp_path: Path, value: str) -> None:
-    skill_dir = tmp_path / "demo-skill"
-    _write_skill(skill_dir, '{"tokens": ' + value + "}\n")
-    assert _secret_assignments(scan_skill_dir(skill_dir)["findings"]) == []
-
-
-@pytest.mark.parametrize("value", ['"literal-credential"', '{"mean": "literal-credential"}', '{"access_token": "literal-credential"}', '["literal-credential"]'])
-def test_token_statistics_do_not_hide_credential_values(tmp_path: Path, value: str) -> None:
-    skill_dir = tmp_path / "demo-skill"
-    _write_skill(skill_dir, '{"tokens": ' + value + "}\n")
-    assert _secret_assignments(scan_skill_dir(skill_dir)["findings"])
-
-
 def test_secret_assignment_still_flags_non_python_text(tmp_path: Path) -> None:
     """Non-Python text keeps the line-oriented sweep for config and shell files."""
     skill_dir = tmp_path / "demo-skill"

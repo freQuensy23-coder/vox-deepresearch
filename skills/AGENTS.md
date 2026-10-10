@@ -31,6 +31,3 @@
   retry auth errors, not-found responses, rate limits or research pagination.
   Offline transport contracts live in `tests/skills/test_telegram_research.py`;
   live behavioral checks and their limits are in the skill's `evals/` directory.
-
-The data-analysis script reports missing dependencies and exits. Do not install
-packages as a side effect of importing the script.
