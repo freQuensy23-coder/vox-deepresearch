@@ -43,14 +43,14 @@ def test_only_complete_search_is_healthy(body, expected):
     assert probe.finish() == expected
 
 
-def test_probe_memory_is_bounded_and_oversized_is_neutral():
+def test_large_valid_frame_is_healthy_with_bounded_buffers():
     probe = relay.CompletionProbe(True)
+    probe.feed(b'{"messages":[{"text":"')
     for _ in range(100):
         probe.feed(b"x" * 65536)
-        assert len(probe.pending) <= relay.FRAME_LIMIT
-        assert len(probe.whole) <= relay.FRAME_LIMIT
-    probe.feed(b"\n" + FINAL)
-    assert probe.finish() == "neutral"
+        assert probe.buffered_bytes <= 259
+    probe.feed(b'"}],"stop_reason":"finished"}')
+    assert probe.finish() == "success"
 
 
 def test_only_advancing_semantic_progress_counts():
@@ -425,8 +425,10 @@ def test_only_root_of_pretty_json_can_mark_completion():
     assert probe.finish() == "failure"
 
 
-@pytest.mark.parametrize("stream", ["true", "false"])
-def test_real_vox_cli_search_page_round_trip(rig, tmp_path, stream):
+@pytest.mark.parametrize(
+    "stream,message_count", [("true", 3), ("false", 3), ("true", 1179)]
+)
+def test_real_vox_cli_search_page_round_trip(rig, tmp_path, stream, message_count):
     """Execute the shipped CLI, with a process-level guard forbidding external sockets."""
     server = rig.start()
     messages = [
@@ -435,17 +437,17 @@ def test_real_vox_cli_search_page_round_trip(rig, tmp_path, stream):
             "group_id": -1001 if index < 3 else -1002,
             "group_alias": "synthetic_chat",
             "user_id": index + 100,
-            "text": "Сохранить весь текст. " * 1000,
+            "text": "Сохранить весь текст. " * (1000 if message_count == 3 else 40),
             "is_private": False,
             "url": f"https://t.me/synthetic_chat/{index}",
             "date": "2026-01-14T12:00:00Z",
         }
-        for index in range(1, 4)
+        for index in range(1, message_count + 1)
     ]
     terminal = {
         "stop_reason": "finished",
         "messages": messages,
-        "count": 3,
+        "count": message_count,
         "stopped_at": "2026-01-01T00:00:00Z",
     }
     encoded = json.dumps(terminal, ensure_ascii=False).encode()
@@ -491,8 +493,7 @@ def test_real_vox_cli_search_page_round_trip(rig, tmp_path, stream):
             "1",
             "search-page",
             "cli",
-            "--limit",
-            "2",
+            *(["--limit", "2"] if message_count == 3 else []),
             "--from",
             "2026-01-01T00:00:00Z",
             "--to",
@@ -524,15 +525,17 @@ def test_real_vox_cli_search_page_round_trip(rig, tmp_path, stream):
         data["stop_reason"] == "finished"
         and data["stopped_at"] == terminal["stopped_at"]
     )
-    assert data["count"] == data["returned_count"] == 3
-    assert [g["message_count"] for g in data["group_summary"]] == [2, 1]
+    assert data["count"] == data["returned_count"] == message_count
+    assert [g["message_count"] for g in data["group_summary"]] == sorted(
+        [2, message_count - 2], reverse=True
+    )
     assert len(rig.requests) == 1
     method, target, headers, body = rig.requests[0]
     assert method == "GET" and not body
     params = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(target).query))
     assert params == {
         "query": "cli",
-        "limit": "2",
+        "limit": "2" if message_count == 3 else "2000",
         "from_date": "2026-01-01T00:00:00Z",
         "to_date": "2026-02-01T00:00:00Z",
         "stream": stream,

@@ -58,7 +58,13 @@ def established(gate, request_class="search_text", capacity=5):
     """
     with gate._transaction() as state:
         control = state["baselines"][request_class]["control"]
-        control.update(limit=capacity, safe=capacity, probe=False)
+        control.update(
+            limit=capacity,
+            safe=capacity,
+            probe=False,
+            bootstrap=False,
+            bootstrap_pending=[],
+        )
 
 
 def test_established_five_and_separate_metadata_lane(setup):
@@ -90,7 +96,7 @@ def test_healthy_backlog_grows_to_32_without_spacing(setup):
             complete(gate, clock, leases, 0.2)
         finally:
             os.close(fd)
-    assert capacities[0] == 1
+    assert capacities[0] == 5
     assert max(capacities) == 32
     assert gate.snapshot()["baselines"]["search_text"]["duration"] == pytest.approx(0.2)
 
@@ -102,27 +108,31 @@ def test_no_backlog_does_not_expand(setup):
     assert gate.snapshot()["lanes"]["search"]["capacity"] == 5
 
 
-def test_current_stall_stops_new_work_before_completion(setup):
+def test_single_stall_keeps_other_admissions_available(setup):
     gate, clock = setup
     complete(gate, clock, [gate.acquire(0)], 1)
     established(gate)
     lease = gate.acquire(0)
     gate.headers(lease, 200)  # Early HTTP headers are not query progress.
     clock.advance(3)
-    with pytest.raises(Busy):
-        gate.acquire(0)
+    fresh = gate.acquire(0)
+    gate.finish(fresh, "neutral")
     state = gate.snapshot()
-    assert state["lanes"]["search"]["capacity"] == 2
-    assert state["lanes"]["search"]["incidents"] == 1
+    assert state["lanes"]["search"]["capacity"] == 5
+    assert state["lanes"]["search"]["incidents"] == 0
     assert state["lanes"]["search"]["active"] == 1
     for _ in range(10):
         gate.snapshot()
-    assert gate.snapshot()["lanes"]["search"]["incidents"] == 1
+    assert gate.snapshot()["lanes"]["search"]["incidents"] == 0
     metadata = gate.acquire(0, "group")
     gate.finish(metadata, "neutral")
-    gate.finish(lease)  # Late success must not erase the incident.
-    assert gate.snapshot()["lanes"]["search"]["capacity"] == 2
-    assert gate.snapshot()["baselines"]["search_text"]["duration"] == pytest.approx(1)
+    gate.finish(
+        lease
+    )  # Late success adds cost evidence while retaining the original reference.
+    assert gate.snapshot()["lanes"]["search"]["capacity"] == 5
+    assert gate.snapshot()["baselines"]["search_text"]["reference"][
+        "duration"
+    ] == pytest.approx(1)
 
 
 def test_meaningful_progress_keeps_long_healthy_request_admissible(setup):
@@ -262,7 +272,7 @@ def test_class_baselines_are_separate_and_bounded(setup):
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda s: s.update(version=5),
+        lambda s: s.update(version=7),
         lambda s: s.update(retry_until=float("nan")),
         lambda s: s["lanes"]["search"].update(capacity=999),
         lambda s: s["baselines"]["search_text"].update(duration=-1),
@@ -416,7 +426,7 @@ def test_material_slow_cohort_reduces_even_with_regular_progress(setup):
     gate, clock = setup
     complete(gate, clock, [gate.acquire(0)], 1)
     established(gate)
-    leases = [gate.acquire(0) for _ in range(3)]
+    leases = [gate.acquire(0) for _ in range(5)]
     for _ in range(4):
         clock.advance(1)
         for lease in leases:
@@ -424,7 +434,7 @@ def test_material_slow_cohort_reduces_even_with_regular_progress(setup):
     state = gate.snapshot()
     assert state["lanes"]["search"]["capacity"] == 2
     assert state["lanes"]["search"]["incidents"] == 1
-    assert state["lanes"]["search"]["active"] == 3
+    assert state["lanes"]["search"]["active"] == 5
     for lease in leases:
         gate.finish(lease, "cancelled")
 
@@ -512,7 +522,7 @@ g.finish(l, 'success')
             process.communicate()
 
 
-def test_new_burst_learns_changed_cost_with_one_valid_probe(setup):
+def test_new_burst_adds_valid_cost_probe_to_empirical_distribution(setup):
     gate, clock = setup
     complete(gate, clock, [gate.acquire(0)], 0.15)
     lease = gate.acquire(0)
@@ -523,7 +533,8 @@ def test_new_burst_learns_changed_cost_with_one_valid_probe(setup):
     gate.progress(lease)
     gate.finish(lease, "success")
     baseline = gate.snapshot()["baselines"]["search_text"]
-    assert baseline["duration"] == pytest.approx(0.6)
+    assert baseline["envelope"]["duration"] == pytest.approx(0.6)
+    assert baseline["duration"] == pytest.approx(0.375)
     assert baseline["reference"]["duration"] == pytest.approx(0.15)
 
 
@@ -539,7 +550,9 @@ def test_invalid_or_cancelled_cost_probe_never_trains(setup, interruption):
     )
     clock.advance(0.3)
     complete(gate, clock, [gate.acquire(0)], 0.6)
-    assert gate.snapshot()["baselines"]["search_text"]["duration"] == pytest.approx(0.6)
+    assert gate.snapshot()["baselines"]["search_text"]["envelope"][
+        "duration"
+    ] == pytest.approx(0.6)
 
 
 def test_relearning_does_not_normalize_overloaded_concurrent_cohort(setup):
@@ -564,9 +577,12 @@ def test_fast_class_skips_blocked_slow_class_head_without_exceeding_total_cap(tm
     with gate._transaction() as state:
         state["lanes"]["search"]["capacity"] = 8
     established(gate, slow, capacity=8)
-    slow_lease = gate.acquire(0, slow)
+    slow_cohort = [gate.acquire(0, slow) for _ in range(8)]
     clock.advance(0.3)
     gate.snapshot()
+    for lease in slow_cohort[1:]:
+        gate.finish(lease, "cancelled")
+    slow_lease = slow_cohort[0]
     recovery_probe = gate.acquire(0, slow)
     stopped = threading.Event()
     result = []
@@ -643,9 +659,9 @@ def test_continuous_queue_reprobes_changed_cost_without_six_serial_requests(setu
                 gate.finish(lease)
         finally:
             os.close(fd)
-    assert gate.snapshot()["baselines"]["search_text"]["duration"] == pytest.approx(
-        0.45
-    )
+    assert gate.snapshot()["baselines"]["search_text"]["envelope"][
+        "duration"
+    ] == pytest.approx(0.45)
     assert gate.snapshot()["lanes"]["search"]["capacity"] >= 2
 
 
@@ -691,18 +707,21 @@ def test_latency_recovery_uses_spare_capacity_without_waiting_old_streams(setup)
     with gate._transaction() as state:
         state["lanes"]["search"]["capacity"] = 8
     established(gate, capacity=8)
-    old = [gate.acquire(0) for _ in range(2)]
+    old = [gate.acquire(0) for _ in range(8)]
     clock.advance(0.5)
     state = gate.snapshot()
     assert state["lanes"]["search"]["capacity"] == 4
-    assert state["lanes"]["search"]["active"] == 2
+    for lease in old[:6]:
+        gate.finish(lease, "cancelled")
+    old = old[6:]
+    assert gate.snapshot()["lanes"]["search"]["active"] == 2
     probe = gate.acquire(0)
     with pytest.raises(Busy):
         gate.acquire(0)
     complete(gate, clock, [probe], 0.35)
-    assert gate.snapshot()["baselines"]["search_text"]["duration"] == pytest.approx(
-        0.35
-    )
+    assert gate.snapshot()["baselines"]["search_text"]["envelope"][
+        "duration"
+    ] == pytest.approx(0.35)
     fresh = [gate.acquire(0) for _ in range(2)]
     assert gate.snapshot()["lanes"]["search"]["active"] == 4
     with pytest.raises(Busy):
@@ -740,9 +759,12 @@ def test_unrealized_two_request_trial_is_not_rejected_as_serial_slowdown(setup):
     with gate._transaction() as state:
         state["lanes"]["search"]["capacity"] = 8
     established(gate, capacity=8)
-    old = [gate.acquire(0) for _ in range(3)]
+    old = [gate.acquire(0) for _ in range(8)]
     clock.advance(0.5)
     gate.snapshot()
+    for lease in old[:5]:
+        gate.finish(lease, "cancelled")
+    old = old[5:]
     probe = gate.acquire(0)
     complete(gate, clock, [probe], 0.35)
     # Three old permits leave just one slot: two new requests must run serially.
@@ -792,7 +814,7 @@ def test_healthy_aggregate_class_demand_can_probe_shared_budget(setup):
     assert maximum > 5
 
 
-def test_shared_budget_trial_rolls_back_on_latency_inflation(setup):
+def test_single_outlier_does_not_prove_shared_budget_trial_failed(setup):
     gate, clock = setup
     complete(gate, clock, [gate.acquire(0)], 0.1)
     established(gate)
@@ -804,7 +826,7 @@ def test_shared_budget_trial_rolls_back_on_latency_inflation(setup):
     lane = gate.snapshot()["lanes"]["search"]
     assert lane["capacity"] == 5
     assert lane["budget_trial"] is False
-    assert lane["incidents"] == 1
+    assert lane["incidents"] == 0
 
 
 def test_shared_budget_confirms_only_one_fully_realized_healthy_window(setup):
@@ -889,3 +911,198 @@ def test_one_queued_class_can_expand_shared_budget_occupied_by_other_class(setup
         os.close(fd)
         for lease in slow_leases + metadata_leases:
             gate.finish(lease, "cancelled")
+
+
+def test_real_single_fast_probe_does_not_prove_global_overload(setup):
+    gate, clock = setup
+    complete(gate, clock, [gate.acquire(0)], 2.285874128)
+    established(gate, capacity=2)
+    with gate._transaction() as state:
+        state["baselines"]["search_text"]["control"]["safe"] = 1
+    leases = [gate.acquire(0) for _ in range(2)]
+    clock.advance(6.711)
+    state = gate.snapshot()
+    assert state["lanes"]["search"]["capacity"] == 5
+    assert state["lanes"]["search"]["incidents"] == 0
+    assert state["baselines"]["search_text"]["control"]["limit"] == 1
+    for lease in leases:
+        gate.finish(lease, "cancelled")
+
+
+def test_variable_serial_successes_learn_without_incidents_or_stuck_hold(setup):
+    gate, clock = setup
+    complete(gate, clock, [gate.acquire(0)], 1.572)
+    for duration in [2.60, 3.05, 1.90, 4.10, 1.73, 2.24]:
+        lease = gate.acquire(0)
+        fd = pending(gate)
+        try:
+            complete(gate, clock, [lease], duration)
+        finally:
+            os.close(fd)
+    state = gate.snapshot()
+    assert state["lanes"]["search"]["incidents"] == 0
+    assert state["lanes"]["search"]["capacity"] >= 5
+    assert state["baselines"]["search_text"]["control"]["limit"] >= 2
+    assert state["baselines"]["search_text"]["control"]["hold"] == 0
+
+    concurrent = [gate.acquire(0) for _ in range(2)]
+    assert gate.snapshot()["lanes"]["search"]["active"] == 2
+    for lease in concurrent:
+        gate.finish(lease, "cancelled")
+
+
+def test_other_class_long_request_does_not_block_cost_learning(setup):
+    gate, clock = setup
+    slow = gate.acquire(0, "group_analytics")
+    for duration in [1.572, 2.60, 3.05, 1.90, 4.10, 1.73, 2.24]:
+        fast = gate.acquire(0)
+        fd = pending(gate)
+        try:
+            complete(gate, clock, [fast], duration)
+        finally:
+            os.close(fd)
+    state = gate.snapshot()
+    assert state["lanes"]["search"]["incidents"] == 0
+    assert state["baselines"]["search_text"]["control"]["limit"] >= 2
+    concurrent = [gate.acquire(0) for _ in range(2)]
+    assert gate.snapshot()["lanes"]["search"]["active"] == 3
+    for lease in concurrent:
+        gate.finish(lease, "cancelled")
+    gate.finish(slow, "cancelled")
+
+
+def test_correlated_slowdown_at_confirmed_full_load_still_reduces_global_cap(setup):
+    gate, clock = setup
+    complete(gate, clock, [gate.acquire(0)], 0.15)
+    established(gate, capacity=5)
+    leases = [gate.acquire(0) for _ in range(5)]
+    clock.advance(0.5)
+    assert gate.snapshot()["lanes"]["search"]["capacity"] == 2
+    for lease in leases:
+        gate.finish(lease, "cancelled")
+
+
+def test_true_overload_recovery_returns_to_actual_four_way_work(setup):
+    gate, clock = setup
+    complete(gate, clock, [gate.acquire(0)], 0.15)
+    established(gate, capacity=5)
+    old = [gate.acquire(0) for _ in range(5)]
+    fd = pending(gate)
+    try:
+        clock.advance(0.5)
+        assert gate.snapshot()["lanes"]["search"]["capacity"] == 2
+        for lease in old:
+            gate.headers(lease, 200)
+            gate.progress(lease)
+            gate.finish(lease)
+    finally:
+        os.close(fd)
+    # These are actual concurrent leases, not only advertised capacity changes.
+    for count in [1, 2, 4]:
+        leases = [gate.acquire(0) for _ in range(count)]
+        assert gate.snapshot()["lanes"]["search"]["active"] == count
+        fd = pending(gate)
+        try:
+            complete(gate, clock, leases, 0.15)
+        finally:
+            os.close(fd)
+
+
+def test_cold_backlog_uses_operator_initial_budget_without_serial_probe(setup):
+    gate, _ = setup
+    leases = [gate.acquire(0) for _ in range(5)]
+    assert gate.snapshot()["lanes"]["search"]["active"] == 5
+    with pytest.raises(Busy):
+        gate.acquire(0)
+    for lease in leases:
+        gate.finish(lease, "cancelled")
+
+
+def test_bootstrap_does_not_censor_slow_initial_members_after_first_fast_reply(setup):
+    gate, clock = setup
+    initial = [gate.acquire(0) for _ in range(5)]
+    complete(gate, clock, [initial[0]], 2)
+    replacement = gate.acquire(0)
+    clock.advance(6)
+    state = gate.snapshot()
+    assert state["baselines"]["search_text"]["control"]["limit"] == 5
+    assert state["lanes"]["search"]["incidents"] == 0
+    for lease in initial[1:] + [replacement]:
+        gate.finish(lease, "cancelled")
+
+
+def test_single_long_lease_does_not_serialize_its_heterogeneous_class(setup):
+    gate, clock = setup
+    initial = [gate.acquire(0) for _ in range(5)]
+    fd = pending(gate)
+    try:
+        complete(gate, clock, initial, 2)
+    finally:
+        os.close(fd)
+    long = gate.acquire(0)
+    quick = [gate.acquire(0) for _ in range(4)]
+    for _ in range(8):
+        fd = pending(gate)
+        try:
+            complete(gate, clock, quick, 1)
+        finally:
+            os.close(fd)
+        quick = [gate.acquire(0) for _ in range(4)]
+        state = gate.snapshot()
+        assert state["baselines"]["search_text"]["control"]["limit"] >= 5
+        assert state["lanes"]["search"]["incidents"] == 0
+    for lease in quick + [long]:
+        gate.finish(lease, "cancelled")
+
+
+@pytest.mark.parametrize("lost", ["cancelled", "crashed"])
+def test_bootstrap_replaces_invalid_initial_member_without_sticking(setup, lost):
+    gate, clock = setup
+    initial = [gate.acquire(0) for _ in range(5)]
+    if lost == "cancelled":
+        gate.finish(initial[0], "cancelled")
+    else:
+        os.close(initial[0].fd)
+        gate.snapshot()
+    replacement = gate.acquire(0)
+    fd = pending(gate)
+    try:
+        complete(gate, clock, initial[1:] + [replacement], 1)
+        state = gate.snapshot()
+        assert state["baselines"]["search_text"]["control"]["bootstrap"] is False
+        assert state["baselines"]["search_text"]["control"]["bootstrap_pending"] == []
+        assert state["outcomes"]["success"] == 5
+    finally:
+        os.close(fd)
+
+
+def test_shared_trial_rolls_back_correlated_full_window_inflation(setup):
+    gate, clock = setup
+    classes = [
+        "search_text",
+        "search_group",
+        "group_messages",
+        "group_analytics",
+        "user_messages",
+        "reporter_preview",
+    ]
+    with gate._transaction() as state:
+        state["lanes"]["search"].update(
+            capacity=6, budget_trial=True, budget_base=5, budget_peak=0
+        )
+        for name in classes:
+            baseline = state["baselines"][name]
+            baseline.update(
+                duration=0.1,
+                header=0.1,
+                gap=0.1,
+                envelope=dict(duration=0.1, header=0.1, gap=0.1),
+            )
+            baseline["control"].update(
+                limit=1, safe=1, probe=False, bootstrap=False, bootstrap_pending=[]
+            )
+    leases = [gate.acquire(0, name) for name in classes]
+    complete(gate, clock, leases, 0.14)
+    lane = gate.snapshot()["lanes"]["search"]
+    assert lane["capacity"] == 5
+    assert lane["incidents"] == 1

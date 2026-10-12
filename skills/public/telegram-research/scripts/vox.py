@@ -257,7 +257,10 @@ def call(path, params=None, method="GET"):
     elif os.environ.get("VOX_TOOL_TRACE_CONTEXT"):
         headers["X-Vox-Tool-Trace"] = os.environ["VOX_TOOL_TRACE_CONTEXT"]
     req = urllib.request.Request(url, method=method, headers=headers)
-    socket_timeout = (
+    # The relay owns admission and the upstream deadline. Waiting for a queued
+    # request must not consume a second, shorter client-side idle budget.
+    # Caller cancellation closes the socket and cancels the relay queue entry.
+    socket_timeout = None if relay else (
         max(TIMEOUT, int(params.get("timeout", 100)) + 30)
         if path == "/search/text"
         else TIMEOUT

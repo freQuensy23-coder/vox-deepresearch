@@ -1,0 +1,515 @@
+{
+  "scope": "Real read-only Vox via local HTTP relay. Pre-frozen32 wirequeryset:31 originalscoped plus exact successfulCLIdefault2000 filledquery,12clients,threecounterbalanced rounds.",
+  "completed": 288,
+  "planned": 288,
+  "source_unchanged": true,
+  "runtime_equal_across_series": true,
+  "runtime_source_hashes": {
+    "vox_relay.py": "96aaa835b324de9701a801670b4d32c4addeb91aef0818b4de05f87e31dd0b75",
+    "vox_adaptive_relay.py": "88501b0863bd94aef75dc39cd87467b56031570c66181479001ea1a6304b7c5b",
+    "adaptive_gate.py": "7460ca247f47b9a40d908a1570022b282ccc4536ad9ab68d598975a685569cef",
+    "vox_json_probe.py": "50179ee92e2d28b594d913e5f38258ea8e0abbdc5e73a686c87db1eb35466286"
+  },
+  "immutable_baseline_hash": "7f9b4b67eb3165743924f46ef31048433366ff6507c9207d0b53818998f234a6",
+  "variants": {
+    "adaptive": {
+      "walls": [
+        29.10606124997139,
+        29.62894804199459,
+        28.6846459590015
+      ],
+      "median_wall": 29.10606124997139,
+      "message_totals": 3606
+    },
+    "fixed": {
+      "walls": [
+        38.962087958992925,
+        44.187751166988164,
+        40.25610900000902
+      ],
+      "median_wall": 40.25610900000902,
+      "message_totals": 3606
+    },
+    "fixed_matched_spacing": {
+      "walls": [
+        34.68266641598893,
+        39.53387637500418,
+        25.424378249968868
+      ],
+      "median_wall": 34.68266641598893,
+      "message_totals": 3606
+    }
+  },
+  "blocks": [
+    {
+      "label": "default2000matrix1-adaptive",
+      "variant": "adaptive",
+      "wall": 29.10606124997139,
+      "completed": 32,
+      "count": 32,
+      "messages": 1202,
+      "bytes": 1795134,
+      "max_frame": 1756097,
+      "peak": 6,
+      "queue_p50": 5.207872958038934,
+      "queue_p95": 10.167406291991938,
+      "service_p50": 4.323871415981557,
+      "service_p95": 6.317770084016956,
+      "client_p50": 8.414591750013642,
+      "client_p95": 15.01322074997006,
+      "scoped31_finish_wall": 29.104904624982737,
+      "outcomes": {
+        "success": 32,
+        "failure": 0,
+        "cancelled": 0,
+        "neutral": 0,
+        "faulted": 0,
+        "crashed": 0
+      },
+      "round": 1,
+      "cold8_completion_wall": 12.493513291992713,
+      "remaining24_completion_span": 16.611391332990024,
+      "remaining24_completion_rate": 1.4447916805340855,
+      "queue_setting": null,
+      "client_timeout": "None for every comparator, matching actual CLI relay mode",
+      "max_observed_queue": 12.004838208958972,
+      "mean_upstream_inflight": 5.189888142972102,
+      "filled_count": 1179,
+      "core_matches_fixed": 32,
+      "scoped31_core_matches_fixed": 31,
+      "core_matches_first_block": 32
+    },
+    {
+      "label": "default2000matrix1-fixed",
+      "variant": "fixed",
+      "wall": 38.962087958992925,
+      "completed": 32,
+      "count": 32,
+      "messages": 1202,
+      "bytes": 1795134,
+      "max_frame": 1756096,
+      "peak": 5,
+      "queue_p50": 4.764168875000905,
+      "queue_p95": 22.181199416983873,
+      "service_p50": 4.726327666954603,
+      "service_p95": 10.479023583000526,
+      "client_p50": 11.483650792040862,
+      "client_p95": 29.93024316598894,
+      "scoped31_finish_wall": 38.96146341704298,
+      "outcomes": null,
+      "round": 1,
+      "cold8_completion_wall": 15.889524917001836,
+      "remaining24_completion_span": 23.071938500041142,
+      "remaining24_completion_rate": 1.0402246867967857,
+      "queue_setting": 700,
+      "client_timeout": "None for every comparator, matching actual CLI relay mode",
+      "max_observed_queue": 28.795508084003814,
+      "mean_upstream_inflight": 4.619144810827743,
+      "filled_count": 1179,
+      "core_matches_fixed": 32,
+      "scoped31_core_matches_fixed": 31,
+      "core_matches_first_block": 32
+    },
+    {
+      "label": "default2000matrix1-fixed_matched_spacing",
+      "variant": "fixed_matched_spacing",
+      "wall": 34.68266641598893,
+      "completed": 32,
+      "count": 32,
+      "messages": 1202,
+      "bytes": 1795159,
+      "max_frame": 1756121,
+      "peak": 5,
+      "queue_p50": 0.1302464579930529,
+      "queue_p95": 26.859354791988153,
+      "service_p50": 4.535271125030704,
+      "service_p95": 9.77460525004426,
+      "client_p50": 8.164475207973737,
+      "client_p95": 30.159971125016455,
+      "scoped31_finish_wall": 34.68220574996667,
+      "outcomes": null,
+      "round": 1,
+      "cold8_completion_wall": 11.602085415972397,
+      "remaining24_completion_span": 23.080120333994273,
+      "remaining24_completion_rate": 1.0398559302418737,
+      "queue_setting": 700,
+      "client_timeout": "None for every comparator, matching actual CLI relay mode",
+      "max_observed_queue": 32.289930833969265,
+      "mean_upstream_inflight": 4.864457888682845,
+      "filled_count": 1179,
+      "core_matches_fixed": 32,
+      "scoped31_core_matches_fixed": 31,
+      "core_matches_first_block": 32
+    },
+    {
+      "label": "default2000matrix2-adaptive",
+      "variant": "adaptive",
+      "wall": 29.62894804199459,
+      "completed": 32,
+      "count": 32,
+      "messages": 1202,
+      "bytes": 1795132,
+      "max_frame": 1756095,
+      "peak": 7,
+      "queue_p50": 4.77322195796296,
+      "queue_p95": 7.26880533399526,
+      "service_p50": 4.027285291987937,
+      "service_p95": 8.374988667026628,
+      "client_p50": 8.449680291989353,
+      "client_p95": 13.462024459033273,
+      "scoped31_finish_wall": 29.62772958399728,
+      "outcomes": {
+        "success": 32,
+        "failure": 0,
+        "cancelled": 0,
+        "neutral": 0,
+        "faulted": 0,
+        "crashed": 0
+      },
+      "round": 2,
+      "cold8_completion_wall": 10.160192542010918,
+      "remaining24_completion_span": 19.46753704198636,
+      "remaining24_completion_rate": 1.2328215915674545,
+      "queue_setting": null,
+      "client_timeout": "None for every comparator, matching actual CLI relay mode",
+      "max_observed_queue": 8.686256584012881,
+      "mean_upstream_inflight": 4.967090339231803,
+      "filled_count": 1179,
+      "core_matches_fixed": 32,
+      "scoped31_core_matches_fixed": 31,
+      "core_matches_first_block": 32
+    },
+    {
+      "label": "default2000matrix2-fixed",
+      "variant": "fixed",
+      "wall": 44.187751166988164,
+      "completed": 32,
+      "count": 32,
+      "messages": 1202,
+      "bytes": 1795125,
+      "max_frame": 1756089,
+      "peak": 5,
+      "queue_p50": 2.3981395000009798,
+      "queue_p95": 21.612604832975194,
+      "service_p50": 4.409524707996752,
+      "service_p95": 12.618447832996026,
+      "client_p50": 11.093119541998021,
+      "client_p95": 30.282946999999695,
+      "scoped31_finish_wall": 44.186808291997295,
+      "outcomes": null,
+      "round": 2,
+      "cold8_completion_wall": 19.20750700001372,
+      "remaining24_completion_span": 24.979301291983575,
+      "remaining24_completion_rate": 0.960795489011622,
+      "queue_setting": 700,
+      "client_timeout": "None for every comparator, matching actual CLI relay mode",
+      "max_observed_queue": 35.235739167022984,
+      "mean_upstream_inflight": 4.330542487894381,
+      "filled_count": 1179,
+      "core_matches_fixed": 32,
+      "scoped31_core_matches_fixed": 31,
+      "core_matches_first_block": 32
+    },
+    {
+      "label": "default2000matrix2-fixed_matched_spacing",
+      "variant": "fixed_matched_spacing",
+      "wall": 39.53387637500418,
+      "completed": 32,
+      "count": 32,
+      "messages": 1202,
+      "bytes": 1795125,
+      "max_frame": 1756088,
+      "peak": 5,
+      "queue_p50": 1.8598604170256294,
+      "queue_p95": 17.934052583004814,
+      "service_p50": 5.199713958019856,
+      "service_p95": 9.087483917013742,
+      "client_p50": 9.172584082989488,
+      "client_p95": 23.088774250005372,
+      "scoped31_finish_wall": 39.53335558302933,
+      "outcomes": null,
+      "round": 2,
+      "cold8_completion_wall": 11.683443291985895,
+      "remaining24_completion_span": 27.849912291043438,
+      "remaining24_completion_rate": 0.8617621394706664,
+      "queue_setting": 700,
+      "client_timeout": "None for every comparator, matching actual CLI relay mode",
+      "max_observed_queue": 28.73939474998042,
+      "mean_upstream_inflight": 4.558057060448587,
+      "filled_count": 1179,
+      "core_matches_fixed": 32,
+      "scoped31_core_matches_fixed": 31,
+      "core_matches_first_block": 32
+    },
+    {
+      "label": "default2000matrix3-adaptive",
+      "variant": "adaptive",
+      "wall": 28.6846459590015,
+      "completed": 32,
+      "count": 32,
+      "messages": 1202,
+      "bytes": 1794257,
+      "max_frame": 1755221,
+      "peak": 7,
+      "queue_p50": 5.270301417040173,
+      "queue_p95": 8.362143832957372,
+      "service_p50": 4.636223375040572,
+      "service_p95": 6.975981124967802,
+      "client_p50": 9.614487459009979,
+      "client_p95": 12.449967375025153,
+      "scoped31_finish_wall": 28.68323133396916,
+      "outcomes": {
+        "success": 32,
+        "failure": 0,
+        "cancelled": 0,
+        "neutral": 0,
+        "faulted": 0,
+        "crashed": 0
+      },
+      "round": 3,
+      "cold8_completion_wall": 10.324016541999299,
+      "remaining24_completion_span": 18.359214791969862,
+      "remaining24_completion_rate": 1.307245449870621,
+      "queue_setting": null,
+      "client_timeout": "None for every comparator, matching actual CLI relay mode",
+      "max_observed_queue": 10.351058250002097,
+      "mean_upstream_inflight": 5.212964742690221,
+      "filled_count": 1179,
+      "core_matches_fixed": 32,
+      "scoped31_core_matches_fixed": 31,
+      "core_matches_first_block": 32
+    },
+    {
+      "label": "default2000matrix3-fixed",
+      "variant": "fixed",
+      "wall": 40.25610900000902,
+      "completed": 32,
+      "count": 32,
+      "messages": 1202,
+      "bytes": 1795128,
+      "max_frame": 1756088,
+      "peak": 5,
+      "queue_p50": 0.28573416598374024,
+      "queue_p95": 30.579412249964662,
+      "service_p50": 5.3456914590206,
+      "service_p95": 10.19871033297386,
+      "client_p50": 8.089101208024658,
+      "client_p95": 36.32323679100955,
+      "scoped31_finish_wall": 40.255196709011216,
+      "outcomes": null,
+      "round": 3,
+      "cold8_completion_wall": 11.495149667025544,
+      "remaining24_completion_span": 28.760047041985672,
+      "remaining24_completion_rate": 0.8344909855315373,
+      "queue_setting": 700,
+      "client_timeout": "None for every comparator, matching actual CLI relay mode",
+      "max_observed_queue": 35.50745291594649,
+      "mean_upstream_inflight": 4.660742546062342,
+      "filled_count": 1179,
+      "core_matches_fixed": 32,
+      "scoped31_core_matches_fixed": 31,
+      "core_matches_first_block": 32
+    },
+    {
+      "label": "default2000matrix3-fixed_matched_spacing",
+      "variant": "fixed_matched_spacing",
+      "wall": 25.424378249968868,
+      "completed": 32,
+      "count": 32,
+      "messages": 1202,
+      "bytes": 1795152,
+      "max_frame": 1756099,
+      "peak": 5,
+      "queue_p50": 0.08643916598521173,
+      "queue_p95": 15.743662875029258,
+      "service_p50": 2.941552249947563,
+      "service_p95": 7.847086124995258,
+      "client_p50": 5.1591209169710055,
+      "client_p95": 21.303004875022452,
+      "scoped31_finish_wall": 25.42340454098303,
+      "outcomes": null,
+      "round": 3,
+      "cold8_completion_wall": 6.630627000005916,
+      "remaining24_completion_span": 18.792777540977113,
+      "remaining24_completion_rate": 1.2770863672317032,
+      "queue_setting": 700,
+      "client_timeout": "None for every comparator, matching actual CLI relay mode",
+      "max_observed_queue": 19.062165374984033,
+      "mean_upstream_inflight": 4.766779804813456,
+      "filled_count": 1179,
+      "core_matches_fixed": 32,
+      "scoped31_core_matches_fixed": 31,
+      "core_matches_first_block": 32
+    }
+  ],
+  "conditions": [
+    "Originalfixed120 queue failed twice locally; preserved separately. Quantitativefixed andnearzero budget700; adaptive actualdefaultNone.",
+    "AllharnessclientsNone,matchingactualCLIrelaymode. Fixedandnearzeroqueue700,adaptiveactualdefaultNone. Upstreamdeadline700retained. Maximumactualqueue reported perblock.",
+    "CoreID/text/date hashes checked for everyrequest, including filleddefault2000query. Count andbytes equality alone nevertreatedas semantic equality.",
+    "No live speed claim inferred fromsyntheticreplay."
+  ],
+  "paired_wall_reduction_percent": {
+    "fixed": [
+      25.29645413098721,
+      32.94759914342548,
+      28.74461374546886
+    ],
+    "fixed_matched_spacing": [
+      16.078940122800635,
+      25.0542806353088,
+      -12.823392088404862
+    ]
+  },
+  "median_wall_reduction_percent": {
+    "fixed": 27.69777811868288,
+    "fixed_matched_spacing": 16.078940122800635
+  },
+  "cli_source_sha256": "a9b850d2b8317f62497982ce98eed03d45f2d3ea12024a93d78c8646e2e42214",
+  "prior_failed_acceptance": [
+    {
+      "version": "ec76",
+      "variants": {
+        "fixed": {
+          "walls": [
+            55.217699708009604,
+            30.985022208013106,
+            24.351960750005674
+          ],
+          "median_wall": 30.985022208013106,
+          "messages": 921
+        },
+        "adaptive": {
+          "walls": [
+            42.91542491596192,
+            50.988402874965686,
+            36.06224320799811
+          ],
+          "median_wall": 42.91542491596192,
+          "messages": 921
+        },
+        "fixed_matched_spacing": {
+          "walls": [
+            64.11721562501043,
+            39.5967800829676,
+            24.16222233296139
+          ],
+          "median_wall": 39.5967800829676,
+          "messages": 843
+        }
+      },
+      "median_slower_than_fixed_percent": 38.50377330006711,
+      "completed": 288,
+      "evidence": "ec76-real-aggregate.json"
+    },
+    {
+      "version": "variance_fix_before_bootstrap",
+      "variants": {
+        "adaptive": {
+          "walls": [
+            75.29727166699013,
+            46.67391445901012,
+            34.404769208980724
+          ],
+          "median_wall": 46.67391445901012,
+          "message_totals": 882
+        },
+        "fixed": {
+          "walls": [
+            37.859572332992684,
+            36.82153474999359,
+            35.552275124995504
+          ],
+          "median_wall": 36.82153474999359,
+          "message_totals": 747
+        },
+        "fixed_matched_spacing": {
+          "walls": [
+            36.21733166597551,
+            43.96218595904065,
+            25.83840320899617
+          ],
+          "median_wall": 36.21733166597551,
+          "message_totals": 921
+        }
+      },
+      "median_slower_than_fixed_percent": 26.757113129344102,
+      "completed": 288,
+      "evidence": "finalfix-matched-real-aggregate.json"
+    }
+  ],
+  "baseline120_failures": [
+    {
+      "scope": "Historical25 exactparameters, original baseline queue120; incomplete admission, not speed comparison",
+      "planned": 25,
+      "upstream_attempts": 12,
+      "complete": 12,
+      "wall": 648.7353512910195,
+      "source_unchanged": true,
+      "stop_reasons": [
+        "relay_http_503",
+        "incomplete_response",
+        "relay_http_502"
+      ],
+      "status_counts": {
+        "200": 12,
+        "None": 6,
+        "502": 1,
+        "503": 6
+      },
+      "messages": 889,
+      "max_frame": 392650,
+      "gate": "original fixed baseline; adaptive never started",
+      "real_upstream_error": false,
+      "trace_directory": "variancefix-holdout-serialized/holdout1"
+    },
+    {
+      "scope": "Original32queryset, originalfixedqueue120",
+      "planned": 32,
+      "complete": 8,
+      "upstream_attempts": 8,
+      "wall": 148.2613561670296,
+      "all_admitted_requests_finished": true,
+      "upstream_errors": 0,
+      "evidence": "finalfix-original/round1"
+    }
+  ],
+  "large_frame_actual_cli_proof": {
+    "variant": "adaptive",
+    "returncode": 0,
+    "wall": 22.13807662500767,
+    "stop_reason": "finished",
+    "messages": 1179,
+    "output_bytes": 128,
+    "wire_bytes": 1756493,
+    "max_frame_bytes": 1755344,
+    "gate_outcomes": {
+      "success": 1,
+      "failure": 0,
+      "cancelled": 0,
+      "neutral": 0,
+      "faulted": 0,
+      "crashed": 0
+    },
+    "cli_early_terminal_read": true,
+    "explicit_limit_argument": false,
+    "cli_default_limit": 2000,
+    "source_hashes": {
+      "local-deploy/vox_json_probe.py": "50179ee92e2d28b594d913e5f38258ea8e0abbdc5e73a686c87db1eb35466286",
+      "local-deploy/adaptive_gate.py": "7460ca247f47b9a40d908a1570022b282ccc4536ad9ab68d598975a685569cef",
+      "local-deploy/vox_adaptive_relay.py": "88501b0863bd94aef75dc39cd87467b56031570c66181479001ea1a6304b7c5b",
+      "local-deploy/vox_relay.py": "96aaa835b324de9701a801670b4d32c4addeb91aef0818b4de05f87e31dd0b75",
+      ".local/vox-adaptive-local/baseline-vox-relay.py": "7f9b4b67eb3165743924f46ef31048433366ff6507c9207d0b53818998f234a6",
+      "skills/public/telegram-research/scripts/vox.py": "a9b850d2b8317f62497982ce98eed03d45f2d3ea12024a93d78c8646e2e42214"
+    }
+  },
+  "functional_tests_passed": 287,
+  "quantile_method": "lower empirical quantile: sorted index floor((n-1)*p)",
+  "scope_limit": "Three counterbalanced repeats of this real public search workload; no universal speedup or hard server rate ceiling claimed.",
+  "evaluation_date": "2026-10-12",
+  "api": "https://api.vox-lab.com",
+  "artifact_scope": "Sanitized aggregate only; no message bodies, IDs, account data, or credential values.",
+  "raw_evidence_directory": ".local/vox-live-ab-20261012/bootstrap-parser-default2000",
+  "actual_cli_probe_directory": ".local/vox-live-ab-20261012/bootstrap-parser-cli2000",
+  "workload_manifest_sha256": "6d6b142545e01969ed3997b2290d6584e15f86b490d9bbd708943c0f5a42bde5",
+  "large_frame_bug_before_fix_evidence": ".local/vox-live-ab-20261012/actual-cli2000-large-frame-bug.json"
+}

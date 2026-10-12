@@ -14,6 +14,7 @@ import fcntl
 import json
 import math
 import os
+import statistics
 from pathlib import Path
 import tempfile
 import time
@@ -158,11 +159,15 @@ class AdaptiveGate:
         )
 
     @staticmethod
-    def _control():
+    def _control(initial=1):
         return {
-            "limit": 1,
-            "safe": 1,
-            "probe": True,
+            "limit": initial,
+            "safe": initial,
+            "probe": False,
+            "bootstrap": True,
+            "bootstrap_assigned": 0,
+            "bootstrap_pending": [],
+            "bootstrap_completed": 0,
             "epoch": 0,
             "started": 0,
             "durations": [],
@@ -174,7 +179,7 @@ class AdaptiveGate:
 
     def _new_state(self):
         return {
-            "version": 4,
+            "version": 6,
             "limits": self.limits,
             "initial": self.initial,
             "retry_until": 0,
@@ -204,6 +209,7 @@ class AdaptiveGate:
                     "budget_trial": False,
                     "budget_base": self.initial[lane],
                     "budget_peak": 0,
+                    "budget_bad": 0,
                 }
                 for lane in self.limits
             },
@@ -216,7 +222,13 @@ class AdaptiveGate:
                     "reference": None,
                     "recovering": False,
                     "calibration": [],
-                    "control": self._control(),
+                    "control": self._control(self.initial[lane]),
+                    "observations": [],
+                    "envelope": {
+                        "duration": 10.0 if lane == "search" else 1.0,
+                        "header": 9.0 if lane == "search" else 1.0,
+                        "gap": 9.0 if lane == "search" else 1.0,
+                    },
                 }
                 for name, lane in CLASSES.items()
             },
@@ -253,7 +265,7 @@ class AdaptiveGate:
             "pending",
         }:
             raise ValueError("invalid controller state")
-        if type(state["version"]) is not int or state["version"] != 4:
+        if type(state["version"]) is not int or state["version"] != 6:
             raise ValueError("unsupported controller state version")
         if state["limits"] != self.limits or state["initial"] != self.initial:
             raise ValueError("controller configuration mismatch")
@@ -284,6 +296,7 @@ class AdaptiveGate:
                 "budget_trial",
                 "budget_base",
                 "budget_peak",
+                "budget_bad",
             }:
                 raise ValueError("invalid lane state")
             if (
@@ -291,6 +304,8 @@ class AdaptiveGate:
                 or type(value["budget_trial"]) is not bool
             ):
                 raise ValueError("invalid lane recovery")
+            if not _integer(value["budget_bad"]):
+                raise ValueError("invalid shared budget feedback")
             if not _integer(value["budget_base"], 1, self.limits[lane]) or not _integer(
                 value["budget_peak"], 0, self.limits[lane]
             ):
@@ -321,6 +336,8 @@ class AdaptiveGate:
                 "recovering",
                 "calibration",
                 "control",
+                "observations",
+                "envelope",
             } or not _integer(value["samples"]):
                 raise ValueError("invalid baseline")
             if any(
@@ -351,6 +368,17 @@ class AdaptiveGate:
                 or not _integer(control["hold_rounds"], 1, 8)
             ):
                 raise ValueError("invalid cohort counters")
+            if (
+                type(control["bootstrap"]) is not bool
+                or not _integer(
+                    control["bootstrap_assigned"], 0, self.initial[_lane(name)]
+                )
+                or not _integer(control["bootstrap_completed"])
+                or not isinstance(control["bootstrap_pending"], list)
+                or len(control["bootstrap_pending"]) > self.initial[_lane(name)]
+                or any(not _token(t) for t in control["bootstrap_pending"])
+            ):
+                raise ValueError("invalid bootstrap cohort")
             if not _integer(control["peak"], 0, self.limits[_lane(name)]):
                 raise ValueError("invalid realized concurrency")
             if (
@@ -361,8 +389,16 @@ class AdaptiveGate:
                 or any(not _number(d, 0.001, 86400) for d in control["durations"])
             ):
                 raise ValueError("invalid cohort measurements")
-            observations = value["calibration"] + (
-                [value["reference"]] if value["reference"] is not None else []
+            if (
+                not isinstance(value["observations"], list)
+                or len(value["observations"]) > 16
+            ):
+                raise ValueError("invalid low-contention observations")
+            observations = (
+                value["observations"]
+                + [value["envelope"]]
+                + value["calibration"]
+                + ([value["reference"]] if value["reference"] is not None else [])
             )
             for observation in observations:
                 if (
@@ -398,6 +434,9 @@ class AdaptiveGate:
                 "failure_seen",
                 "class_epoch",
                 "cost_probe",
+                "class_exclusive",
+                "peak_lane_active",
+                "bootstrap_sample",
             }:
                 raise ValueError("invalid reservation")
             if not _token(value["token"]) or value["class"] not in state["baselines"]:
@@ -434,9 +473,13 @@ class AdaptiveGate:
                     "exclusive",
                     "failure_seen",
                     "cost_probe",
+                    "class_exclusive",
+                    "bootstrap_sample",
                 )
             ):
                 raise ValueError("invalid reservation flags")
+            if not _integer(value["peak_lane_active"], 1, self.limits[lane]):
+                raise ValueError("invalid realized lane concurrency")
             if not _integer(value["class_epoch"]):
                 raise ValueError("invalid class epoch")
         if (
@@ -522,9 +565,12 @@ class AdaptiveGate:
                 if fd is not None:
                     os.close(fd)
                     if kind == "active":
-                        state["baselines"][state[kind][slot]["class"]][
-                            "calibration"
-                        ] = []
+                        record = state[kind][slot]
+                        baseline = state["baselines"][record["class"]]
+                        baseline["calibration"] = []
+                        self._retire_bootstrap(
+                            baseline["control"], record["token"], valid=False
+                        )
                     del state[kind][slot]
                     if kind == "active":
                         state["outcomes"]["crashed"] += 1
@@ -544,6 +590,7 @@ class AdaptiveGate:
         value["budget_trial"] = False
         value["budget_base"] = value["capacity"]
         value["budget_peak"] = 0
+        value["budget_bad"] = 0
         value["generation"] += 1
         value["successes"] = 0
         value["incidents"] += 1
@@ -556,12 +603,21 @@ class AdaptiveGate:
             if _lane(record["class"]) == lane:
                 record["pressure_seen"] = True
 
-    def _latency_pressure(self, state, record, now):
+    def _latency_pressure(self, state, record, now, *, global_pressure=False):
         lane = _lane(record["class"])
         baseline = state["baselines"][record["class"]]
         baseline["recovering"] = True
-        self._pressure(state, lane, record["generation"], now)
+        if global_pressure:
+            self._pressure(state, lane, record["generation"], now)
+        else:
+            # One variable/slow query is evidence about its class's cost, not
+            # proof the shared upstream is overloaded.
+            for peer in state["active"].values():
+                if peer["class"] == record["class"]:
+                    peer["pressure_seen"] = True
         control = baseline["control"]
+        control["bootstrap"] = False
+        control["bootstrap_pending"] = []
         if not control["probe"]:
             control.update(limit=1, safe=1, probe=True, started=0, durations=[], peak=0)
             control["epoch"] += 1
@@ -571,52 +627,64 @@ class AdaptiveGate:
         return (
             record["pressure_seen"]
             and not record["failure_seen"]
-            and record["generation"]
-            < state["lanes"][_lane(record["class"])]["generation"]
+            and (
+                record["generation"]
+                < state["lanes"][_lane(record["class"])]["generation"]
+                or record["class_epoch"]
+                < state["baselines"][record["class"]]["control"]["epoch"]
+            )
         )
 
     def _current_pressure(self, state, lane, now):
         stalled = set()
         cohorts = {}
-        for record in state["active"].values():
-            if _lane(record["class"]) != lane:
-                continue
-            baseline = state["baselines"][record["class"]]
-            # A new-burst cost probe is already isolated to one request. Its
-            # unfamiliar cost must not hold unrelated classes behind it.
-            if record["cost_probe"] or self._acknowledged_latency(state, record):
-                continue
-            cohorts.setdefault(record["class"], []).append(record)
-            # Headers can arrive early while the query is still stalled. First
-            # meaningful data, or later meaningful data gaps, are the signal.
-            last = record["progress"] or record["started"]
-            threshold = max(
-                0.05,
-                2.5 * (baseline["gap"] if record["progress"] else baseline["header"]),
-            )
-            if now - last > threshold:
-                stalled.add(record["class"])
-                self._latency_pressure(state, record, now)
-        # Regular progress must not conceal a material increase in work cost.
-        # One progressing outlier is insufficient: require at least two slow
-        # comparable active requests and a majority of that class's cohort.
+        lane_active = [r for r in state["active"].values() if _lane(r["class"]) == lane]
+        for record in lane_active:
+            if not record["cost_probe"] and not self._acknowledged_latency(
+                state, record
+            ):
+                cohorts.setdefault(record["class"], []).append(record)
         for request_class, records in cohorts.items():
-            slow = [
+            baseline = state["baselines"][request_class]
+            if baseline["control"]["bootstrap"]:
+                continue
+            envelope = baseline["envelope"]
+            slow_gap = [
                 r
                 for r in records
-                if now - r["started"]
-                > 3 * state["baselines"][request_class]["duration"]
+                if now - (r["progress"] or r["started"])
+                > max(
+                    0.05,
+                    2.5 * (envelope["gap"] if r["progress"] else envelope["header"]),
+                )
             ]
-            if len(slow) >= 2 and len(slow) * 2 >= len(records):
-                for record in slow:
-                    self._latency_pressure(state, record, now)
+            slow_age = [
+                r for r in records if now - r["started"] > 3 * envelope["duration"]
+            ]
+            affected = slow_gap or (
+                slow_age
+                if len(slow_age) >= 2 and len(slow_age) * 2 >= len(records)
+                else []
+            )
+            # A lone expensive query holds its own OS permit. It is not an
+            # admission barrier for other queries in the same broad class.
+            if len(affected) < 2 or len(affected) * 2 < len(records):
+                continue
+            stalled.add(request_class)
+            confirmed = (
+                len(affected) >= 2
+                and len(affected) * 2 >= len(records)
+                and baseline["control"]["safe"] >= 2
+                and len(lane_active) >= state["lanes"][lane]["capacity"]
+            )
+            self._latency_pressure(state, affected[0], now, global_pressure=confirmed)
         return stalled
 
     def acquire(self, wait, request_class="search_text", cancelled=None):
-        if not _number(wait, 0, 86400):
+        if wait is not None and not _number(wait, 0, 86400):
             raise ValueError("invalid admission request")
         lane = _lane(request_class)
-        deadline = self.monotonic() + wait
+        deadline = None if wait is None else self.monotonic() + wait
         token = uuid.uuid4().hex
         pending_fd = pending_index = None
         try:
@@ -657,6 +725,10 @@ class AdaptiveGate:
                             _lane(r["class"]) == lane for r in state["active"].values()
                         )
                         faulted = any(r["faulted"] for r in state["active"].values())
+                        if faulted:
+                            raise Busy(
+                                "upstream transport faulted; admission unavailable"
+                            )
                         # A stalled class cannot monopolize the FIFO head.
                         # It gets one probe after its previous requests drain;
                         # other classes remain eligible within the common cap.
@@ -710,6 +782,14 @@ class AdaptiveGate:
                                     continue
                                 lease = Lease(token, slot, fd, self)
                                 control = state["baselines"][request_class]["control"]
+                                bootstrap_sample = (
+                                    control["bootstrap"]
+                                    and control["bootstrap_assigned"]
+                                    < self.initial[lane]
+                                )
+                                if bootstrap_sample:
+                                    control["bootstrap_assigned"] += 1
+                                    control["bootstrap_pending"].append(token)
                                 realized = active_classes.get(request_class, 0) + 1
                                 old_peak = control["peak"]
                                 control["peak"] = max(old_peak, realized)
@@ -726,6 +806,11 @@ class AdaptiveGate:
                                 for peer in state["active"].values():
                                     if _lane(peer["class"]) == lane:
                                         peer["exclusive"] = False
+                                        peer["peak_lane_active"] = max(
+                                            peer["peak_lane_active"], active + 1
+                                        )
+                                    if peer["class"] == request_class:
+                                        peer["class_exclusive"] = False
                                 state["active"][slot] = {
                                     "token": token,
                                     "class": request_class,
@@ -750,6 +835,12 @@ class AdaptiveGate:
                                     "failure_seen": False,
                                     "class_epoch": control["epoch"],
                                     "cost_probe": control["probe"],
+                                    "class_exclusive": active_classes.get(
+                                        request_class, 0
+                                    )
+                                    == 0,
+                                    "peak_lane_active": active + 1,
+                                    "bootstrap_sample": bootstrap_sample,
                                 }
                                 state["requests"] += 1
                                 del state["pending"][pending_index]
@@ -760,10 +851,14 @@ class AdaptiveGate:
                     if lease is not None:
                         os.close(lease.fd)
                     raise
-                remaining = deadline - self.monotonic()
-                if remaining <= 0:
+                remaining = None if deadline is None else deadline - self.monotonic()
+                if remaining is not None and remaining <= 0:
                     raise Busy("admission wait expired")
-                self.sleep(min(remaining, self.poll_interval))
+                self.sleep(
+                    self.poll_interval
+                    if remaining is None
+                    else min(remaining, self.poll_interval)
+                )
         finally:
             if pending_fd is not None:
                 try:
@@ -842,12 +937,63 @@ class AdaptiveGate:
             record["progress"] = now
             record["first_progress"] = record["first_progress"] or now
 
+    def _observe_cost(self, state, record, outcome, timings, now):
+        lane = _lane(record["class"])
+        value = state["lanes"][lane]
+        # Another long-lived class need not prevent learning. Require no fresh
+        # peer of this class and only low, bounded total contention throughout.
+        # Loaded cohorts, genuine global pressure, failures and cancellations
+        # cannot redefine a slowdown as the new healthy baseline.
+        if (
+            outcome != "success"
+            or record["failure_seen"]
+            or (
+                not record["class_exclusive"]
+                and not state["baselines"][record["class"]]["control"]["bootstrap"]
+            )
+            or record["peak_lane_active"] > self.initial[lane]
+            or record["generation"] != value["generation"]
+            or value["budget_trial"]
+            or now < state["retry_until"]
+        ):
+            return False
+        baseline = state["baselines"][record["class"]]
+        baseline["observations"] = (baseline["observations"] + [timings.copy()])[-16:]
+        values = baseline["observations"]
+        for key in timings:
+            ordered = sorted(v[key] for v in values)
+            baseline[key] = statistics.median(ordered)
+            baseline["envelope"][key] = ordered[math.ceil(0.9 * len(ordered)) - 1]
+        baseline["samples"] += 1
+        if baseline["reference"] is None:
+            baseline["reference"] = timings.copy()
+        baseline["control"]["hold"] = 0
+        baseline["control"]["hold_rounds"] = 1
+        if baseline["control"]["safe"] == 1:
+            baseline["control"]["goodput"] = 1 / baseline["duration"]
+        return True
+
+    @staticmethod
+    def _retire_bootstrap(control, token, *, valid):
+        if token in control["bootstrap_pending"]:
+            control["bootstrap_pending"].remove(token)
+            if not valid:
+                control["bootstrap_assigned"] = max(
+                    0, control["bootstrap_assigned"] - 1
+                )
+
     def _cohort_complete(self, state, record, outcome, timings, now):
         """Measure only admitted upstream work, never caller queue wait."""
         baseline = state["baselines"][record["class"]]
         control = baseline["control"]
         lane = _lane(record["class"])
-        if outcome != "success" or record["failure_seen"] or now < state["retry_until"]:
+        valid = (
+            outcome == "success"
+            and not record["failure_seen"]
+            and now >= state["retry_until"]
+        )
+        self._retire_bootstrap(control, record["token"], valid=valid)
+        if not valid:
             control["durations"] = []
             control["peak"] = 0
             control["started"] = 0
@@ -857,8 +1003,26 @@ class AdaptiveGate:
                 1, min(control["safe"], state["lanes"][lane]["capacity"])
             )
             if outcome == "failure":
+                control["bootstrap"] = False
+                control["bootstrap_pending"] = []
                 control["probe"] = True
                 control["limit"] = 1
+            return False
+        if control["bootstrap"]:
+            control["bootstrap_completed"] += 1
+            # Continue serving at the operator's initial budget while the first
+            # assigned cohort completes. Early fast completions alone cannot
+            # censor the still-running slow members out of the cost model.
+            if (
+                control["bootstrap_assigned"] >= self.initial[lane]
+                and not control["bootstrap_pending"]
+            ):
+                control["bootstrap"] = False
+                control["goodput"] = control["bootstrap_completed"] / max(
+                    0.001, now - control["started"]
+                )
+                control.update(started=now, durations=[], peak=0)
+                control["epoch"] += 1
             return False
         if (
             control["probe"]
@@ -883,11 +1047,13 @@ class AdaptiveGate:
             # work supplies a new operating baseline; history remains available.
             if baseline["reference"] is None:
                 baseline["reference"] = timings.copy()
-            baseline.update(timings)
-            baseline["samples"] += 1
+            if not baseline["observations"]:
+                baseline.update(timings)
+                baseline["envelope"] = timings.copy()
+                baseline["samples"] += 1
             baseline["recovering"] = False
             control["safe"] = 1
-            control["goodput"] = 1 / timings["duration"]
+            control["goodput"] = 1 / baseline["duration"]
             control["probe"] = False
             control["limit"] = min(2, self.limits[lane])
             if not state["lanes"][lane]["budget_trial"]:
@@ -903,25 +1069,41 @@ class AdaptiveGate:
         # before a capacity change. Dropping those completions while charging
         # their occupied time would falsely report a throughput regression.
         control["durations"].append(timings["duration"])
-        inflation = max(control["durations"]) > baseline["duration"] * 1.25
+        slow = sum(
+            d > baseline["envelope"]["duration"] * 1.25 for d in control["durations"]
+        )
+        inflation = slow >= 2 and slow * 2 >= len(control["durations"])
         if not inflation and control["peak"] < control["limit"]:
             # The global budget (including old leases) can prevent the trial
             # allocation. Serial completions are not evidence concurrency hurts.
             if len(control["durations"]) >= control["limit"]:
                 control["durations"] = []
             return False
-        if len(control["durations"]) < control["limit"] and not inflation:
+        if len(control["durations"]) < control["limit"]:
             return False
         goodput = len(control["durations"]) / max(0.001, now - control["started"])
         trial = control["limit"] > control["safe"]
         improved = goodput > control["goodput"]
-        if inflation or (trial and not improved):
+        if inflation:
+            self._latency_pressure(
+                state,
+                record,
+                now,
+                global_pressure=control["peak"] >= state["lanes"][lane]["capacity"]
+                and control["safe"] >= 2,
+            )
+            return False
+        if trial and not improved:
             control["limit"] = control["safe"]
             control["hold_rounds"] = min(8, control["hold_rounds"] * 2)
             control["hold"] = control["hold_rounds"]
         else:
             control["safe"] = control["limit"]
-            control["goodput"] = goodput
+            control["goodput"] = (
+                1 / baseline["duration"]
+                if control["limit"] == 1 and baseline["observations"]
+                else goodput
+            )
             if trial and control["limit"] > self.initial[lane]:
                 control["hold"] = max(control["hold"], 1)
             if control["hold"]:
@@ -953,29 +1135,38 @@ class AdaptiveGate:
             or record["generation"] != value["generation"]
         ):
             return
-        healthy = outcome == "success" and all(
-            timings[k] <= baseline[k] * 1.25 for k in timings
-        )
-        if not healthy:
-            value["successes"] = 0
-            value["budget_peak"] = 0
+        if baseline["control"]["bootstrap"]:
+            return
+        if outcome != "success":
+            value["successes"] = value["budget_bad"] = value["budget_peak"] = 0
             if value["budget_trial"] and outcome not in {"cancelled", "neutral"}:
                 self._pressure(
                     state, lane, record["generation"], now, target=value["budget_base"]
                 )
             return
+        healthy = all(timings[k] <= baseline["envelope"][k] * 1.25 for k in timings)
         value["successes"] += 1
+        value["budget_bad"] += int(not healthy)
         if (
             value["successes"] < value["capacity"]
             or value["budget_peak"] < value["capacity"]
         ):
             return
-        # A full, healthy window confirms at most one shared-budget experiment.
-        value["successes"] = 0
-        value["budget_peak"] = 0
+        correlated = (
+            value["budget_bad"] >= 2 and value["budget_bad"] * 2 >= value["successes"]
+        )
+        all_healthy = value["budget_bad"] == 0
+        value["successes"] = value["budget_bad"] = value["budget_peak"] = 0
         if value["budget_trial"]:
-            value["budget_trial"] = False
-            value["budget_base"] = value["capacity"]
+            if correlated:
+                self._pressure(
+                    state, lane, record["generation"], now, target=value["budget_base"]
+                )
+            else:
+                value["budget_trial"] = False
+                value["budget_base"] = value["capacity"]
+            return
+        if not all_healthy:
             return
         if (
             state["recovering"]
@@ -1019,7 +1210,9 @@ class AdaptiveGate:
         ) and not any(r["class"] == request_class for r in state["pending"].values()):
             baseline = state["baselines"][request_class]
             epoch = baseline["control"]["epoch"] + 1
-            baseline["control"] = self._control()
+            baseline["control"] = self._control(
+                min(self.initial[lane], state["lanes"][lane]["capacity"])
+            )
             baseline["control"]["epoch"] = epoch
         if not any(
             _lane(r["class"]) == lane for r in state["active"].values()
@@ -1030,6 +1223,7 @@ class AdaptiveGate:
                 budget_trial=False,
                 budget_base=value["capacity"],
                 budget_peak=0,
+                budget_bad=0,
                 successes=0,
             )
 
@@ -1064,14 +1258,13 @@ class AdaptiveGate:
             )
             state["outcomes"][outcome] += 1
             timings = {"duration": duration, "header": first, "gap": gap}
-            healthy = all(timings[key] <= baseline[key] * 1.75 for key in timings)
-            if (
-                outcome == "success"
-                and not healthy
-                and not self._acknowledged_latency(state, record)
-            ):
-                baseline["recovering"] = True
-            recalibrated = self._cohort_complete(state, record, outcome, timings, now)
+            learned = self._observe_cost(state, record, outcome, timings, now)
+            healthy = all(
+                timings[key] <= baseline["envelope"][key] * 1.75 for key in timings
+            )
+            recalibrated = (
+                self._cohort_complete(state, record, outcome, timings, now) or learned
+            )
             if recalibrated:
                 healthy = True
             if outcome == "failure":
@@ -1092,8 +1285,8 @@ class AdaptiveGate:
                         baseline["recovering"] = False
                     # Cost baselines are learned by bounded completed probes,
                     # never by an inflated/rejected concurrency experiment.
-                elif not healthy:
-                    self._pressure(state, lane, record["generation"], now)
+                # Individual expensive completions are observations, not proof
+                # that the entire heterogeneous class needs serialization.
             self._budget_complete(state, record, outcome, timings, now)
             del state["active"][lease.slot]
             self._reset_drained(state, lane, record["class"])

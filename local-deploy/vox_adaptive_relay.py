@@ -2,7 +2,6 @@
 
 import http.client
 import ipaddress
-import json
 import math
 import os
 import select
@@ -16,16 +15,16 @@ from pathlib import Path
 
 from adaptive_gate import AdaptiveGate, Busy, Cancelled
 from vox_relay import HTTPSUpstream, RelayHandler, RelayServer
+from vox_json_probe import CompletionProbe
 
 
 DEFAULTS = dict(
-    queue_wait=120.0,
+    queue_wait=None,
     request_deadline=700.0,
     socket_idle=630.0,
     client_timeout=10.0,
     max_clients=64,
 )
-FRAME_LIMIT = 1024 * 1024
 
 
 def request_class(route, target):
@@ -56,108 +55,6 @@ def request_class(route, target):
     return f"{route}/{scope}/{span}/{size}"
 
 
-class CompletionProbe:
-    """Bounded parser: forwarding never depends on fitting a response in memory."""
-
-    def __init__(self, search, notify=lambda: None):
-        self.search = search
-        self.notify = notify
-        self.pending = bytearray()
-        self.whole = bytearray()
-        self.skipping = False
-        self.whole_overflow = False
-        self.oversized = False
-        self.failed = False
-        self.malformed = False
-        self.final = False
-        self.valid = False
-        self.progress_values = {}
-
-    def inspect(self, raw):
-        try:
-            frame = json.loads(raw)
-        except (ValueError, UnicodeError, RecursionError):
-            return False
-        self.valid = True
-        if not isinstance(frame, dict):
-            return True
-        failed = (
-            bool(frame.get("error"))
-            or bool(frame.get("errors"))
-            or frame.get("ok") is False
-            or frame.get("success") is False
-            or frame.get("status") in ("error", "failed")
-            or bool(frame.get("partial"))
-            or bool(frame.get("is_partial"))
-            or (
-                bool(frame.get("detail"))
-                and set(frame) <= {"detail", "status", "status_code", "code"}
-            )
-        )
-        self.failed |= failed
-        if failed:
-            return True
-        if frame.get("stop_reason") == "finished" and isinstance(
-            frame.get("messages"), list
-        ):
-            if not self.final:
-                self.notify()
-            self.final = True
-        for name in ("point", "progress", "processed", "processed_messages"):
-            value = frame.get(name)
-            if (
-                type(value) in (int, float)
-                and math.isfinite(value)
-                and value > self.progress_values.get(name, 0)
-            ):
-                self.progress_values[name] = value
-                self.notify()
-        return True
-
-    def feed(self, chunk):
-        if not self.whole_overflow:
-            if len(self.whole) + len(chunk) <= FRAME_LIMIT:
-                self.whole.extend(chunk)
-            else:
-                self.whole.clear()
-                self.whole_overflow = True
-        parts = chunk.split(b"\n")
-        for index, part in enumerate(parts):
-            if not self.skipping:
-                if len(self.pending) + len(part) <= FRAME_LIMIT:
-                    self.pending.extend(part)
-                else:
-                    self.pending.clear()
-                    self.skipping = self.oversized = True
-            if index < len(parts) - 1:
-                if not self.skipping and self.pending.strip():
-                    self.malformed |= not self.inspect(self.pending)
-                self.pending.clear()
-                self.skipping = False
-
-    def classify(self):
-        if self.failed:
-            return "failure"
-        if self.oversized or (self.whole_overflow and not self.final):
-            return "neutral"
-        if self.malformed:
-            return "failure"
-        if self.search:
-            return "success" if self.final else "failure"
-        return "success" if self.valid else "neutral"
-
-    def finish(self):
-        if not self.whole_overflow:
-            # A complete ordinary JSON object may span lines. Interpret its root,
-            # never individual nested objects that happened to fit on one line.
-            whole = CompletionProbe(self.search)
-            if whole.inspect(self.whole):
-                return whole.classify()
-        if not self.skipping and self.pending.strip():
-            self.malformed |= not self.inspect(self.pending)
-        return self.classify()
-
-
 class AdaptiveRelayServer(RelayServer):
     request_queue_size = 64
 
@@ -176,7 +73,8 @@ class AdaptiveRelayServer(RelayServer):
             raise ValueError("unknown option")
         if any(
             type(v) not in (int, float) or not math.isfinite(v) or v <= 0
-            for v in self.options.values()
+            for k, v in self.options.items()
+            if k != "queue_wait" or v is not None
         ):
             raise ValueError("invalid limit")
         if (

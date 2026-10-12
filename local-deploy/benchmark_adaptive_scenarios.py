@@ -143,6 +143,7 @@ def main():
         args.baseline,
         directory / "vox_adaptive_relay.py",
         directory / "adaptive_gate.py",
+        directory / "vox_json_probe.py",
         directory / "vox_relay.py",
         directory / "benchmark_adaptive_relay.py",
         Path(__file__),

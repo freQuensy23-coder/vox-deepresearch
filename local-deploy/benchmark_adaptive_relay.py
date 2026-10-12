@@ -399,6 +399,9 @@ def main():
         args.candidate.with_name("vox_relay.py"),
         Path(__file__),
     ]
+    probe_source = args.candidate.with_name("vox_json_probe.py")
+    if probe_source.exists():
+        source_paths.append(probe_source)
 
     def hashes():
         return {
