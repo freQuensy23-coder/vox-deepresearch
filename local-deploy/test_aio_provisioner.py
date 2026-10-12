@@ -144,11 +144,23 @@ class ProvisionerTests(unittest.TestCase):
     def test_contract_options(self):
         self.broker.create({**self.payload, "extra_mounts": [], "skills_container_path": "/mnt/skills", "include_legacy_skills": True, "provision_lark_cli_runtime": False, "provision_lark_cli_broker": False, "max_shell_sessions": 10})
 
+    def test_capacity_for_32_subagents_and_lead_is_forwarded_and_reported(self):
+        result = self.broker.create({**self.payload, "max_shell_sessions": 33})
+        self.assertEqual(result["max_shell_sessions"], 33)
+        argv = next(call[0] for call in self.docker.calls if call[0][3] == "run")
+        self.assertIn("MAX_SHELL_SESSIONS=33", argv)
+        self.assertEqual(self.broker.get("sandbox-A")["max_shell_sessions"], 33)
+
+    def test_shell_capacity_rejects_invalid_values_before_docker(self):
+        for value in (0, -1, 66, True, "33", 33.5):
+            self.assert_error(400, lambda: self.broker.create({**self.payload, "max_shell_sessions": value}))
+        self.assertEqual(self.docker.calls, [])
+
     def test_invalid_ids_and_request_overrides_are_rejected_before_docker(self):
         for field in self.payload:
             for value in ["../escape", "a/b", "", "a" * 65, None, 4, "x\n", "ü", "--name=x"]:
                 self.assert_error(400, lambda: self.broker.create({**self.payload, field: value}))
-        for field, value in [("extra_mounts", [{"host_path": "/"}]), ("skills_container_path", "/etc"), ("image", "evil"), ("command", ["sh"]), ("mounts", []), ("max_shell_sessions", 11), ("provision_lark_cli_runtime", True), ("provision_lark_cli_broker", True)]:
+        for field, value in [("extra_mounts", [{"host_path": "/"}]), ("skills_container_path", "/etc"), ("image", "evil"), ("command", ["sh"]), ("mounts", []), ("max_shell_sessions", 66), ("provision_lark_cli_runtime", True), ("provision_lark_cli_broker", True)]:
             self.assert_error(400, lambda: self.broker.create({**self.payload, field: value}))
         self.assertEqual(self.docker.calls, [])
 

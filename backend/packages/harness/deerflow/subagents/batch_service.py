@@ -163,6 +163,7 @@ class SubagentBatchService:
             max_running_items=max_running,
             max_attempts=self._config.max_attempts,
             execution_spec=request.execution_spec,
+            max_items_per_run=self._config.max_items_per_run,
         )
 
     async def get_batch(

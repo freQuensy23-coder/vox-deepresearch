@@ -1000,10 +1000,12 @@ async def task_tool(
     poll_count = 0
     last_status = None
     last_message_count = 0  # Track how many AI messages we've already sent
-    # Polling timeout: execution timeout + 60s buffer, checked every 5s
+    # Finite execution timeout + 60s buffer; zero disables normal polling expiry.
+    # Keep a separate finite 60s cleanup budget when execution is unlimited.
     max_poll_count = (config.timeout_seconds + 60) // 5
 
-    logger.info(f"[trace={trace_id}] Started background task {tool_call_id} (execution_id={execution_id}, subagent={subagent_type}, timeout={config.timeout_seconds}s, polling_limit={max_poll_count} polls)")
+    polling_limit = f"{max_poll_count} polls" if config.timeout_seconds else "unlimited"
+    logger.info(f"[trace={trace_id}] Started background task {tool_call_id} (execution_id={execution_id}, subagent={subagent_type}, timeout={config.timeout_seconds}s, polling_limit={polling_limit})")
 
     writer = get_stream_writer()
     try:
@@ -1207,7 +1209,7 @@ async def task_tool(
             # Polling timeout as a safety net (in case thread pool timeout doesn't work)
             # Set to execution timeout + 60s buffer, in 5s poll intervals
             # This catches edge cases where the background task gets stuck
-            if poll_count > max_poll_count:
+            if config.timeout_seconds > 0 and poll_count > max_poll_count:
                 timeout_minutes = config.timeout_seconds // 60
                 logger.error(f"[trace={trace_id}] Task {tool_call_id} polling timed out after {poll_count} polls (should have been caught by thread pool timeout)")
                 _report_subagent_usage(runtime, result)

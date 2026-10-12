@@ -36,3 +36,9 @@ Tests do not start a service or invoke real Docker:
 ```sh
 python3 -B -m unittest discover -s local-deploy -p 'test_*.py' -v
 ```
+
+The provisioner accepts `max_shell_sessions` from 1 through 65 (the harness
+ceiling of 64 subagents plus the lead), forwards it to the sandbox environment,
+and reports the configured container value. The default remains 10; a Gateway
+with 32 execution slots requests 33 sessions. This does not change sandbox
+count, mount policy, or resource limits.

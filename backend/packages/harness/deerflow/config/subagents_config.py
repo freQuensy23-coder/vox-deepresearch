@@ -93,8 +93,8 @@ class SubagentOverrideConfig(BaseModel):
 
     timeout_seconds: int | None = Field(
         default=None,
-        ge=1,
-        description="Timeout in seconds for this subagent (None = use global default)",
+        ge=0,
+        description="Timeout in seconds for this subagent (0 = unlimited, None = inherit)",
     )
     max_turns: int | None = Field(
         default=None,
@@ -153,8 +153,8 @@ class CustomSubagentConfig(BaseModel):
     )
     timeout_seconds: int = Field(
         default=900,
-        ge=1,
-        description="Maximum execution time in seconds",
+        ge=0,
+        description="Maximum execution time in seconds (0 = unlimited)",
     )
 
     @field_validator("timeout_seconds", "max_turns", mode="before")
@@ -168,8 +168,8 @@ class SubagentsAppConfig(BaseModel):
 
     timeout_seconds: int = Field(
         default=1800,
-        ge=1,
-        description="Default timeout in seconds for built-in subagents (default: 1800 = 30 minutes); custom agents use their own timeout_seconds unless given a per-agent override",
+        ge=0,
+        description="Default timeout in seconds for built-in subagents (0 = unlimited; default: 1800 = 30 minutes); custom agents use their own timeout_seconds unless given a per-agent override",
     )
     max_turns: int | None = Field(
         default=None,

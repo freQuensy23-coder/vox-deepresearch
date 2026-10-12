@@ -66,9 +66,8 @@ class TestSubagentOverrideConfig:
         override = SubagentOverrideConfig(model="any-arbitrary-model-name")
         assert override.model == "any-arbitrary-model-name"
 
-    def test_rejects_zero(self):
-        with pytest.raises(ValueError):
-            SubagentOverrideConfig(timeout_seconds=0)
+    def test_zero_disables_timeout_but_not_turn_limit(self):
+        assert SubagentOverrideConfig(timeout_seconds=0).timeout_seconds == 0
         with pytest.raises(ValueError):
             SubagentOverrideConfig(max_turns=0)
 
@@ -119,9 +118,8 @@ class TestSubagentsAppConfigDefaults:
         assert config.max_turns == 120
         assert config.max_total_per_run == 8
 
-    def test_rejects_zero_timeout(self):
-        with pytest.raises(ValueError):
-            SubagentsAppConfig(timeout_seconds=0)
+    def test_zero_disables_timeout_but_not_count_limits(self):
+        assert SubagentsAppConfig(timeout_seconds=0).timeout_seconds == 0
         with pytest.raises(ValueError):
             SubagentsAppConfig(max_turns=0)
         with pytest.raises(ValueError):
@@ -653,3 +651,10 @@ class TestPollingTimeoutCalculation:
             max_poll_count = (dummy_config.timeout_seconds + 60) // 5
             polling_window_seconds = max_poll_count * 5
             assert polling_window_seconds > timeout_seconds
+
+
+def test_zero_timeout_override_and_inheritance():
+    config = SubagentsAppConfig(timeout_seconds=0, agents={"bash": SubagentOverrideConfig(timeout_seconds=30), "custom": SubagentOverrideConfig(timeout_seconds=0)})
+    assert config.get_timeout_for("general-purpose") == 0
+    assert config.get_timeout_for("bash") == 30
+    assert config.get_timeout_for("custom") == 0

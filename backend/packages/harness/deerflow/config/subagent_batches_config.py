@@ -10,6 +10,7 @@ class SubagentBatchesConfig(BaseModel):
     poll_interval_seconds: float = Field(default=1.0, ge=0.1, le=60.0)
     lease_seconds: int = Field(default=120, ge=10, le=3600)
     max_items_per_batch: int = Field(default=5_000, ge=1, le=100_000)
+    max_items_per_run: int = Field(default=1_000, ge=1, le=100_000)
     default_max_live_items: int = Field(default=100, ge=1, le=10_000)
     max_live_items_per_batch: int = Field(default=1_000, ge=1, le=100_000)
     default_max_running_items: int = Field(default=3, ge=1, le=64)

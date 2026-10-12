@@ -1,5 +1,12 @@
 ### Tool System (`packages/harness/deerflow/tools/`)
 
+`batch_task` accepts exactly one of inline `items` or `items_file`. The latter is a
+UTF-8 JSON array with the same item schema, read from the authorized current-thread
+workspace/outputs sandbox only, capped at 16 MiB. Authorization and incarnation
+checks precede reading; file reads and parsing run off-loop with lifecycle draining.
+No host-path or shell-HTTP dispatch fallback. Both forms use the same native service,
+ownership, idempotency and admission limits.
+
 `task` and `batch_task` opt into JSON checks with `file:<path> json-valid`.
 See [subagents/AGENTS.md](../subagents/AGENTS.md) for read limits and UNVERIFIED semantics.
 Batch readers bound by assembly use its AppConfig output budget. Fit the complete escaped response under 10K and active per-tool/fallback limits; too-small envelopes stop reading. Numeric reader inputs are strict integers. Escape `<` in outer JSON to preserve untrusted data without exposing framework tags; decoding restores the document unchanged.

@@ -1740,9 +1740,11 @@ def test_cleanup_not_called_on_polling_safety_timeout(monkeypatch):
     assert len(scheduled_cleanups) == 1
 
 
-def test_cleanup_scheduled_on_cancellation(monkeypatch):
+@pytest.mark.parametrize("timeout_seconds", [0, 10])
+def test_cleanup_scheduled_on_cancellation(monkeypatch, timeout_seconds):
     """Verify cancellation handler synchronously cleans up after shielded wait."""
     config = _make_subagent_config()
+    config.timeout_seconds = timeout_seconds
     events = []
     cleanup_calls = []
     poll_count = 0
@@ -3415,3 +3417,27 @@ def test_task_tool_forwards_execution_only_knowledge_scope(monkeypatch):
         "mode": "selected",
         "dataset_ids": ["dataset-1"],
     }
+
+
+def test_zero_timeout_polls_past_former_safety_deadline(monkeypatch):
+    config = _make_subagent_config()
+    config.timeout_seconds = 0
+    polls = 0
+    cleaned = []
+
+    def result(_):
+        nonlocal polls
+        polls += 1
+        return _make_result(FakeSubagentStatus.RUNNING if polls <= 30 else FakeSubagentStatus.COMPLETED, result="done", ai_messages=[])
+
+    monkeypatch.setattr(task_tool_module, "SubagentStatus", FakeSubagentStatus)
+    monkeypatch.setattr(task_tool_module, "get_subagent_config", lambda _: config)
+    monkeypatch.setattr(task_tool_module, "get_background_task_result", result)
+    monkeypatch.setattr(task_tool_module, "get_stream_writer", lambda: lambda _: None)
+    monkeypatch.setattr(task_tool_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(task_tool_module, "cleanup_background_task", cleaned.append)
+    monkeypatch.setattr("deerflow.tools.get_available_tools", lambda **kwargs: [])
+    output = _run_task_tool(runtime=_make_runtime(), description="research", prompt="continue", subagent_type="general-purpose", tool_call_id="unlimited-poll")
+    assert _task_tool_message(output).additional_kwargs[SUBAGENT_STATUS_KEY] == "completed"
+    assert polls == 31
+    assert len(cleaned) == 1

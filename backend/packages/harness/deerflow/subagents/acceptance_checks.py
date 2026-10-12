@@ -418,7 +418,7 @@ _JSON_READ_INNER_SCRIPT = (
 )
 
 
-def _read_bounded_json_content(runtime: Any, resolved: str, thread_data: Mapping[str, Any] | None) -> bytes | None:
+def _read_bounded_json_content(runtime: Any, resolved: str, thread_data: Mapping[str, Any] | None, *, max_bytes: int = _FILE_CONTENT_READ_CAP_BYTES) -> bytes | None:
     """Read up to the cap plus one byte to detect growth; return None if completeness is uncertain."""
     from deerflow.authz.sandbox_authz import authorize_sandbox_execution, safe_app_config
     from deerflow.sandbox.tools import _resolve_local_read_path, ensure_sandbox_initialized, is_local_sandbox
@@ -427,7 +427,7 @@ def _read_bounded_json_content(runtime: Any, resolved: str, thread_data: Mapping
         sandbox = ensure_sandbox_initialized(runtime)
         root = "/".join(resolved.split("/")[:4])
         output = sandbox.execute_command(
-            f"/usr/bin/env -i /bin/sh -c {shlex.quote(_JSON_READ_INNER_SCRIPT)} json-read {shlex.quote(resolved)} {shlex.quote(root)} {_FILE_CONTENT_READ_CAP_BYTES + 1}",
+            f"/usr/bin/env -i /bin/sh -c {shlex.quote(_JSON_READ_INNER_SCRIPT)} json-read {shlex.quote(resolved)} {shlex.quote(root)} {max_bytes + 1}",
             env={"_DEERFLOW_SIZE_PROBE": "1"},
             timeout=10,
         )
@@ -439,7 +439,7 @@ def _read_bounded_json_content(runtime: Any, resolved: str, thread_data: Mapping
         if not output.startswith("JSON\n") or not output.endswith("\nEND"):
             return None
         encoded = output[5:-4]
-        if len(encoded) > 4 * ((_FILE_CONTENT_READ_CAP_BYTES + 5 + 2) // 3):
+        if len(encoded) > 4 * ((max_bytes + 5 + 2) // 3):
             return None
         try:
             payload = base64.b64decode(encoded, validate=True)
@@ -457,8 +457,8 @@ def _read_bounded_json_content(runtime: Any, resolved: str, thread_data: Mapping
             return None
         content = bytearray()
         # Disable buffered read-ahead; continue short reads to EOF or cap plus one to distinguish complete from truncated content.
-        while len(content) <= _FILE_CONTENT_READ_CAP_BYTES:
-            chunk = handle.read(_FILE_CONTENT_READ_CAP_BYTES + 1 - len(content))
+        while len(content) <= max_bytes:
+            chunk = handle.read(max_bytes + 1 - len(content))
             if not chunk:
                 break
             content.extend(chunk)

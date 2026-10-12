@@ -42,6 +42,46 @@ class BatchTaskItem(BaseModel):
     acceptance_criteria: list[str] | None = Field(default=None, description="Optional completion requirements checked separately from execution status, using the same bounded checklist as task.")
 
 
+_BATCH_ITEMS_FILE_MAX_BYTES = 16 * 1024 * 1024
+
+
+def _read_batch_items_file(runtime: Runtime, path: str) -> list[BatchTaskItem]:
+    """Read a complete manifest through the current thread's sandbox boundary."""
+    from deerflow.sandbox.tools import get_thread_data, is_local_sandbox
+    from deerflow.subagents.acceptance_checks import _read_bounded_json_content, _reject_json_constant, _resolve_scoped_path
+
+    # Accept sandbox virtual paths only, never arbitrary host paths or URLs.
+    if not path.startswith(("/mnt/user-data/workspace/", "/mnt/user-data/outputs/")) or ".." in path.split("/"):
+        raise ValueError("items_file must be a file under /mnt/user-data/workspace/ or /mnt/user-data/outputs/.")
+    thread_data = get_thread_data(runtime)
+    resolved = _resolve_scoped_path(path, thread_data, resolve_symlinks=is_local_sandbox(runtime))
+    if resolved is None:
+        raise ValueError("items_file is outside the current thread workspace.")
+    content = _read_bounded_json_content(runtime, resolved, thread_data, max_bytes=_BATCH_ITEMS_FILE_MAX_BYTES)
+    if content is None:
+        raise ValueError("items_file could not be read completely as a regular sandbox file.")
+    if len(content) > _BATCH_ITEMS_FILE_MAX_BYTES:
+        raise ValueError("items_file exceeds the 16 MiB manifest limit; split it into smaller batches.")
+    try:
+        payload = json.loads(content.decode("utf-8"), parse_constant=_reject_json_constant)
+        if not isinstance(payload, list) or not 1 <= len(payload) <= 100_000:
+            raise ValueError
+        return [BatchTaskItem.model_validate(item) for item in payload]
+    except (ValueError, RecursionError) as exc:
+        # Do not echo manifest contents (or Pydantic's input excerpts) into context.
+        raise ValueError("items_file must contain a nonempty UTF-8 JSON array of valid batch items (key, prompt, optional acceptance_criteria).") from exc
+
+
+async def _load_batch_items_file(runtime: Runtime, path: str) -> list[BatchTaskItem]:
+    from deerflow.sandbox.lease import run_sync_lifecycle_operation
+    from deerflow.sandbox.tools import ensure_sandbox_initialized_async, sandbox_authorization_scope_async
+
+    async with sandbox_authorization_scope_async(runtime):
+        await ensure_sandbox_initialized_async(runtime)
+        # Drain cancellation before relinquishing sandbox lifecycle ownership.
+        return await run_sync_lifecycle_operation(_read_batch_items_file, runtime, path)
+
+
 _NO_EXPLICIT_BATCH_SUBMITTER = object()
 _explicit_batch_submitter: ContextVar[SubagentBatchSubmitter | None | object] = ContextVar(
     "deerflow_explicit_subagent_batch_submitter",
@@ -155,9 +195,10 @@ def _merge_skill_allowlists(parent: list[str] | None, child: list[str] | None) -
 async def batch_task(
     runtime: Runtime,
     title: str,
-    items: list[BatchTaskItem],
     subagent_type: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
+    items: list[BatchTaskItem] | None = None,
+    items_file: str | None = None,
     max_live_items: int | None = None,
     max_running_items: int | None = None,
 ) -> Command:
@@ -167,6 +208,13 @@ async def batch_task(
     can be completed without another item's output. This tool returns a batch
     identifier immediately; it never inserts thousands of results into the lead
     agent context. Use ``batch_status`` for a compact progress snapshot.
+
+    For programmatic fan-out, use bash to generate a UTF-8 JSON array in the
+    thread workspace, then pass its virtual path as ``items_file``. Supply
+    exactly one of ``items`` and ``items_file``. The file is read once (up to
+    16 MiB); each array entry uses the same item schema and admission limits
+    as inline items. No prompts or credentials need to pass through shell HTTP
+    calls. Continue independent work after submission.
 
     Each item may carry ``acceptance_criteria`` using the same deterministic
     checks as ``task``: ``file:<path> exists|non-empty``, ``file_written:<path>``,
@@ -182,6 +230,7 @@ async def batch_task(
     Args:
         title: Short batch name shown to the user.
         items: Stable item keys, self-contained prompts, and optional per-item acceptance_criteria.
+        items_file: Alternative JSON array file under /mnt/user-data/workspace/ or /mnt/user-data/outputs/.
         subagent_type: Native subagent definition used for every item.
         max_live_items: Optional queued-plus-running item window; when set it must be >= 1.
         max_running_items: Optional per-batch real execution concurrency; when set it must be >= 1.
@@ -193,11 +242,8 @@ async def batch_task(
             content="Durable subagent batches are unavailable. Enable subagent_batches with a SQL database and restart Gateway.",
             error=True,
         )
-    if not items:
-        return _result(tool_call_id, content="A batch must contain at least one item.", error=True)
-    keys = [item.key for item in items]
-    if len(set(keys)) != len(keys):
-        return _result(tool_call_id, content="Batch item keys must be unique.", error=True)
+    if (items is None) == (items_file is None):
+        return _result(tool_call_id, content="Provide exactly one of items or items_file.", error=True)
 
     context = runtime.context if runtime is not None and isinstance(runtime.context, dict) else {}
     if context.get(THREAD_INCARNATION_METADATA_GUARD_KEY) is True:
@@ -222,6 +268,18 @@ async def batch_task(
     thread_id = context.get("thread_id") or runtime.config.get("configurable", {}).get("thread_id")
     if not thread_id:
         return _result(tool_call_id, content="Durable batches require a thread_id.", error=True)
+    if items_file is not None:
+        try:
+            items = await _load_batch_items_file(runtime, items_file)
+        except ValueError as exc:
+            return _result(tool_call_id, content=str(exc), error=True)
+        except Exception:
+            return _result(tool_call_id, content="items_file could not be read from the authorized thread sandbox.", error=True)
+    if not items:
+        return _result(tool_call_id, content="A batch must contain at least one item.", error=True)
+    keys = [item.key for item in items]
+    if len(set(keys)) != len(keys):
+        return _result(tool_call_id, content="Batch item keys must be unique.", error=True)
     user_id = resolve_runtime_user_id(runtime)
     run_id = context.get("run_id")
     submission_key = f"{run_id or thread_id}:{tool_call_id}"

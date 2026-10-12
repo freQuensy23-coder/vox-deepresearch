@@ -33,7 +33,7 @@ class ManagedSubagentDefinition(BaseModel):
     skills: list[str] | None = None
     model: str = "inherit"
     max_turns: int = Field(default=50, ge=1)
-    timeout_seconds: int = Field(default=900, ge=1)
+    timeout_seconds: int = Field(default=900, ge=0)
     enabled: bool = True
 
     @field_validator("name")

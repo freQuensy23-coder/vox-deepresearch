@@ -34,7 +34,7 @@ class SubagentConfig:
         timeout_seconds: Bare fallback execution-time cap. For built-in agents the
             effective limit is the global ``subagents.timeout_seconds`` (default
             1800 = 30 min), layered on by the registry; this 900 only applies
-            when no differing global value exists.
+            when no differing global value exists. Zero disables the execution deadline.
         prompt_overlay: Operator instructions around the complete system message.
     """
 

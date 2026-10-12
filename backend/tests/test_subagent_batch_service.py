@@ -127,10 +127,12 @@ async def test_submit_defaults_only_the_limits_the_caller_omitted(overrides: dic
         (_MISSING, False),
     ],
 )
+@pytest.mark.parametrize("timeout_seconds", [0, 900])
 async def test_execute_item_marks_real_running_then_persists_terminal_result(
     monkeypatch,
     thread_incarnation,
     expected_present,
+    timeout_seconds,
 ) -> None:
     result = SimpleNamespace(
         status=FakeStatus.RUNNING,
@@ -141,6 +143,7 @@ async def test_execute_item_marks_real_running_then_persists_terminal_result(
     )
 
     execution_spec = dict(_request().execution_spec)
+    execution_spec["subagent_config"] = {**execution_spec["subagent_config"], "timeout_seconds": timeout_seconds}
     if thread_incarnation is not _MISSING:
         execution_spec[THREAD_INCARNATION_CONTEXT_KEY] = thread_incarnation
 
@@ -212,6 +215,7 @@ async def test_execute_item_marks_real_running_then_persists_terminal_result(
     assert repository.finalized["succeeded"] is True
     assert repository.finalized["result"] == "done"
     assert executor_kwargs["execution_capacity"] is execution_capacity
+    assert executor_kwargs["config"].timeout_seconds == timeout_seconds
     assert executor_kwargs["knowledge_scope"] == {
         "version": 1,
         "mode": "selected",

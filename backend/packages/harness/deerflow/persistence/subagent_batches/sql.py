@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -110,6 +111,7 @@ class SubagentBatchRepository:
         max_running_items: int,
         max_attempts: int,
         execution_spec: dict[str, Any],
+        max_items_per_run: int | None = None,
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
         batch = SubagentBatchRow(
@@ -148,6 +150,24 @@ class SubagentBatchRepository:
         ]
         async with self._sf() as session:
             try:
+                if run_id is not None and max_items_per_run is not None:
+                    # Serialize count+insert across workers; a Python lock cannot
+                    # protect another Gateway process. Do no file/model IO here.
+                    dialect = session.get_bind().dialect.name
+                    if dialect == "sqlite":
+                        await session.execute(text("BEGIN IMMEDIATE"))
+                    elif dialect == "postgresql":
+                        scope = f"subagent-batch-budget:{user_id}:{thread_id}:{run_id}"
+                        lock_key = int.from_bytes(hashlib.sha256(scope.encode()).digest()[:8], "big", signed=True)
+                        await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+                    else:
+                        raise ValueError("Per-run batch admission requires SQLite or PostgreSQL.")
+                    existing = (await session.execute(select(SubagentBatchRow).where(SubagentBatchRow.user_id == user_id, SubagentBatchRow.submission_key == submission_key))).scalar_one_or_none()
+                    if existing is not None:
+                        return await self._with_counts(session, existing)
+                    used = await session.scalar(select(func.coalesce(func.sum(SubagentBatchRow.total_items), 0)).where(SubagentBatchRow.user_id == user_id, SubagentBatchRow.thread_id == thread_id, SubagentBatchRow.run_id == run_id))
+                    if int(used or 0) + len(items) > max_items_per_run:
+                        raise ValueError(f"Per-run batch item limit {max_items_per_run} exceeded ({used} already submitted).")
                 session.add(batch)
                 # The models intentionally do not declare an ORM relationship;
                 # flush the parent explicitly so SQLite's immediate FK check

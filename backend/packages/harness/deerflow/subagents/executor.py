@@ -2077,7 +2077,7 @@ class SubagentExecutor:
                 parent_context,
                 lambda: self._aexecute(task, result_holder),
             )
-            return future.result(timeout=self.config.timeout_seconds)
+            return future.result(timeout=self.config.timeout_seconds or None)
         except FuturesTimeoutError:
             if result_holder is not None:
                 result_holder.cancel_event.set()
@@ -2172,7 +2172,7 @@ class SubagentExecutor:
             try:
                 return await asyncio.wait_for(
                     self._aexecute(task, result),
-                    timeout=self.config.timeout_seconds,
+                    timeout=self.config.timeout_seconds or None,
                 )
             except TimeoutError:
                 result.cancel_event.set()

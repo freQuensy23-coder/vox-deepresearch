@@ -137,3 +137,12 @@ def test_store_factory_rejects_memory_database():
     )
     with pytest.raises(ValueError, match="sqlite.*postgres"):
         make_managed_subagent_store(config)
+
+
+@pytest.mark.parametrize("store_fixture", ["file_store", "sql_store"])
+def test_unlimited_timeout_survives_storage(request, store_fixture):
+    store = request.getfixturevalue(store_fixture)
+    store.create(_definition(timeout_seconds=0))
+    assert store.get("researcher").timeout_seconds == 0
+    with pytest.raises(ValueError):
+        _definition(timeout_seconds=-1)

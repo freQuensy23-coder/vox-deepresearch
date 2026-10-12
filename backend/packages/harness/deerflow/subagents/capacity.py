@@ -73,7 +73,7 @@ class SubagentExecutionCapacity:
         try:
             await asyncio.wait_for(
                 waiter,
-                timeout=self._config.queue_timeout_seconds,
+                timeout=self._config.queue_timeout_seconds or None,
             )
         except (TimeoutError, asyncio.CancelledError) as exc:
             async with self._lock:

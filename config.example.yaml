@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 56
+config_version: 57
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -1883,10 +1883,11 @@ subagent_runtime:
   max_running: 3
   max_queued: 64
   admission_policy: queue       # queue or reject when all slots are occupied
-  queue_timeout_seconds: 300
+  queue_timeout_seconds: 300     # 0 = wait indefinitely; cancellation still works
 
 # subagents:
 #   # Default timeout (seconds) for built-in subagents (default: 1800 = 30 min).
+#   # Set 0 for no execution deadline (ordinary tasks and durable batches).
 #   # Custom agents use their own timeout_seconds (default 900) unless overridden.
 #   timeout_seconds: 1800
 #   # Optional global max-turn override for all subagents. One turn is one
@@ -1969,6 +1970,8 @@ subagent_batches:
   poll_interval_seconds: 1
   lease_seconds: 120
   max_items_per_batch: 5000
+  # Cumulative submitted items across all batches in one lead run (terminal items count).
+  max_items_per_run: 1000
   default_max_live_items: 100
   max_live_items_per_batch: 1000
   default_max_running_items: 3

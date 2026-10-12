@@ -143,13 +143,9 @@ class TestCustomSubagentConfig:
                 max_turns=0,
             )
 
-    def test_rejects_zero_timeout(self):
-        with pytest.raises(ValueError):
-            CustomSubagentConfig(
-                description="test",
-                system_prompt="test",
-                timeout_seconds=0,
-            )
+    def test_zero_timeout_is_unlimited(self):
+        config = CustomSubagentConfig(description="test", system_prompt="test", timeout_seconds=0)
+        assert config.timeout_seconds == 0
 
 
 # ---------------------------------------------------------------------------

@@ -314,3 +314,15 @@ async def test_invalid_path_name_returns_422(operation: str):
         else:
             await router.delete_managed_subagent("../planner", _request("admin"))
     assert excinfo.value.status_code == 422
+
+
+async def test_managed_subagent_api_accepts_unlimited_timeout():
+    created = await router.create_managed_subagent(
+        _request("admin"),
+        router.ManagedSubagentCreateRequest(name="unlimited", description="Research", system_prompt="Research the topic", timeout_seconds=0),
+    )
+    assert created.timeout_seconds == 0
+    updated = await router.update_managed_subagent("unlimited", _request("admin"), router.ManagedSubagentUpdateRequest(timeout_seconds=30))
+    assert updated.timeout_seconds == 30
+    updated = await router.update_managed_subagent("unlimited", _request("admin"), router.ManagedSubagentUpdateRequest(timeout_seconds=0))
+    assert updated.timeout_seconds == 0

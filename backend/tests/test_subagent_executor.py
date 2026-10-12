@@ -6613,3 +6613,57 @@ def test_utcnow_helper_returns_utc_aware_datetime(classes):
     assert now.tzinfo is not None
     assert now.utcoffset() is not None
     assert now.utcoffset().total_seconds() == 0.0
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_unlimited_async_execution_completes_or_cancels(classes, cancel):
+    """Zero must not cancel before entry; explicit cancellation still drains work."""
+    executor_module = sys.modules["deerflow.subagents.executor"]
+    config = classes["SubagentConfig"](name="unlimited", description="test", timeout_seconds=0)
+    executor = classes["SubagentExecutor"](config=config, tools=[], thread_id="unlimited-test")
+    entered = threading.Event()
+    finished = threading.Event()
+    release = threading.Event()
+
+    async def work(task, result):
+        result.status = classes["SubagentStatus"].RUNNING
+        entered.set()
+        try:
+            while not release.is_set():
+                await asyncio.sleep(0.001)
+            result.try_set_terminal(classes["SubagentStatus"].COMPLETED, result="done")
+            return result
+        finally:
+            finished.set()
+
+    with patch.object(executor, "_aexecute", side_effect=work):
+        execution_id = executor.execute_async("work")
+        try:
+            assert entered.wait(3), "zero timeout cancelled work before it started"
+            assert executor_module.get_background_task_result(execution_id).status == classes["SubagentStatus"].RUNNING
+            if cancel:
+                executor_module.request_cancel_background_task(execution_id)
+            else:
+                release.set()
+            assert finished.wait(3)
+            deadline = time.monotonic() + 3
+            result = executor_module.get_background_task_result(execution_id)
+            expected = classes["SubagentStatus"].CANCELLED if cancel else classes["SubagentStatus"].COMPLETED
+            while result.status != expected and time.monotonic() < deadline:
+                time.sleep(0.001)
+            assert result.status == expected
+            executor_module.cleanup_background_task(execution_id)
+            assert executor_module.get_background_task_result(execution_id) is None
+        finally:
+            release.set()
+            executor_module.request_cancel_background_task(execution_id)
+
+
+def test_unlimited_sync_execution_has_no_future_deadline(classes):
+    executor_module = sys.modules["deerflow.subagents.executor"]
+    config = classes["SubagentConfig"](name="unlimited", description="test", timeout_seconds=0)
+    executor = classes["SubagentExecutor"](config=config, tools=[], thread_id="unlimited-test")
+    future = MagicMock()
+    with patch.object(executor_module, "_submit_to_isolated_loop_in_context", return_value=future):
+        assert executor.execute("work") is future.result.return_value
+    future.result.assert_called_once_with(timeout=None)

@@ -31,3 +31,11 @@
   retry auth errors, not-found responses, rate limits or research pagination.
   Offline transport contracts live in `tests/skills/test_telegram_research.py`;
   live behavioral checks and their limits are in the skill's `evals/` directory.
+
+Telegram research now uses a breadth lead and one depth subagent per group
+(only confirmed related-group clusters may share an assignment). Preserve the
+four shared registry lists, atomic locked updates, provenance, claims and
+one-page sourced facts. Batch manifests dispatch independent group tasks;
+helpers must not choose keywords, relevance or research stopping conditions.
+Depth agents may use Jev for triage and inspect other public chats of topical
+participants to propose new groups; the next depth assignment stays with the lead.

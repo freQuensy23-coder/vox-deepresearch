@@ -81,3 +81,9 @@ def test_production_research_limits_reach_middleware_without_clamping() -> None:
     )
     assert middleware.max_concurrent == 32
     assert middleware.max_total == 1000
+
+
+def test_queue_timeout_zero_disables_expiry_but_negative_is_invalid():
+    assert SubagentRuntimeConfig(queue_timeout_seconds=0).queue_timeout_seconds == 0
+    with pytest.raises(ValidationError):
+        SubagentRuntimeConfig(queue_timeout_seconds=-1)

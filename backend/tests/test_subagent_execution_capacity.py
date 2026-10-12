@@ -20,8 +20,9 @@ def restore_default_execution_capacity():
 
 
 @pytest.mark.asyncio
-async def test_capacity_queues_without_starting_more_than_configured_slots() -> None:
-    configure_subagent_execution_capacity(SubagentRuntimeConfig(max_running=1, max_queued=2, queue_timeout_seconds=5))
+@pytest.mark.parametrize("timeout_seconds", [0, 5])
+async def test_capacity_queues_without_starting_more_than_configured_slots(timeout_seconds) -> None:
+    configure_subagent_execution_capacity(SubagentRuntimeConfig(max_running=1, max_queued=2, queue_timeout_seconds=timeout_seconds))
     capacity = get_subagent_execution_capacity()
     release = asyncio.Event()
     started: list[str] = []
@@ -91,8 +92,9 @@ async def test_capacity_timeout_removes_waiter_and_releases_slot() -> None:
 
 
 @pytest.mark.asyncio
-async def test_capacity_cancelled_waiter_does_not_leak_queue_or_slot() -> None:
-    configure_subagent_execution_capacity(SubagentRuntimeConfig(max_running=1, max_queued=2, queue_timeout_seconds=5))
+@pytest.mark.parametrize("timeout_seconds", [0, 5])
+async def test_capacity_cancelled_waiter_does_not_leak_queue_or_slot(timeout_seconds) -> None:
+    configure_subagent_execution_capacity(SubagentRuntimeConfig(max_running=1, max_queued=2, queue_timeout_seconds=timeout_seconds))
     capacity = get_subagent_execution_capacity()
     release = asyncio.Event()
 

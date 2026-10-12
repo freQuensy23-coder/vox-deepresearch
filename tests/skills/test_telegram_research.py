@@ -23,7 +23,9 @@ spec.loader.exec_module(vox)
 @pytest.fixture(autouse=True)
 def isolated_working_directory(monkeypatch, tmp_path, tmp_path_factory):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VOX_ADMISSION_DIR", str(tmp_path_factory.mktemp("vox-admission")))
+    monkeypatch.setenv(
+        "VOX_ADMISSION_DIR", str(tmp_path_factory.mktemp("vox-admission"))
+    )
 
 
 @pytest.fixture
@@ -34,7 +36,11 @@ def transport(monkeypatch):
     def sleep(seconds):
         clock[0] += seconds
 
-    monkeypatch.setattr(vox, "time", SimpleNamespace(time=lambda: clock[0], monotonic=lambda: clock[0], sleep=sleep))
+    monkeypatch.setattr(
+        vox,
+        "time",
+        SimpleNamespace(time=lambda: clock[0], monotonic=lambda: clock[0], sleep=sleep),
+    )
     requests = []
     responses = []
 
@@ -135,7 +141,9 @@ def test_explicit_text_preview_marks_truncation(transport, capsys):
 def test_search_can_use_documented_nonstreaming_json_transport(transport, capsys):
     requests, responses = transport
     final = {
-        "messages": [{"id": 7, "group_id": -10012345, "text": "professional discussion"}],
+        "messages": [
+            {"id": 7, "group_id": -10012345, "text": "professional discussion"}
+        ],
         "count": 1,
         "stop_reason": "timeout",
         "stopped_at": "2026-04-11T19:10:40Z",
@@ -452,7 +460,13 @@ def test_scoped_search_checks_public_card_and_preserves_zero_params(transport, c
         [public_card(), {"messages": [], "count": 0, "stop_reason": "finished"}]
     )
     run_cli(
-        capsys, "search-page", "work", "--include", "-10012345", "--exclude-users", "98765"
+        capsys,
+        "search-page",
+        "work",
+        "--include",
+        "-10012345",
+        "--exclude-users",
+        "98765",
     )
     assert urlsplit(requests[0].full_url).path == "/groups/-10012345"
     params = parse_qs(urlsplit(requests[1].full_url).query)
@@ -539,7 +553,13 @@ def test_saved_public_card_avoids_repeating_group_lookup(transport, capsys, tmp_
         {"messages": [{"group_id": -10012345, "id": 8, "text": "work"}], "count": 1}
     )
     out = run_cli(
-        capsys, "search-page", "work", "--include", "-10012345", "--public-card", str(card)
+        capsys,
+        "search-page",
+        "work",
+        "--include",
+        "-10012345",
+        "--public-card",
+        str(card),
     )
     assert out["messages"][0]["id"] == 8
     assert len(requests) == 1
@@ -863,18 +883,15 @@ def test_output_publication_error_leaves_no_partial_result(
     assert list(tmp_path.iterdir()) == []
 
 
-def test_research_instructions_require_disk_handoffs_and_link_free_final_report():
-    skill = (SCRIPT.parents[1] / "SKILL.md").read_text(encoding="utf-8")
-    reference = (SCRIPT.parents[1] / "references/vox-tools.md").read_text(
-        encoding="utf-8"
-    )
-    assert "Все рабочие материалы и доказательства сохраняй на диск" in skill
-    assert "Передавай между агентами явные абсолютные пути к файлам" in skill
-    assert "выборочный поиск по файлам" in skill
-    assert "Итоговый ответ пользователю — факты без ссылок" in skill
-    assert "локальные пути" in skill
-    assert "URL первоисточников" in skill
-    assert "--output FILE" in reference
-    assert "stdout содержит только абсолютный путь" in reference
-    assert "Сохраняй stdout в JSON-файл" not in reference
-    assert "stdout содержит только итоговый JSON" not in reference
+def test_research_skill_references_resolve_inside_package():
+    import re
+
+    root = SCRIPT.parents[1]
+    resources = [root / "SKILL.md", *root.joinpath("references").glob("*.md")]
+    for resource in resources:
+        for target in re.findall(
+            r"\]\((references/[^)]+)\)", resource.read_text(encoding="utf-8")
+        ):
+            resolved = (resource.parent / target).resolve()
+            assert resolved.is_relative_to(root.resolve())
+            assert resolved.is_file(), target

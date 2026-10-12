@@ -26,7 +26,7 @@ class SubagentRuntimeConfig(BaseModel):
     )
     queue_timeout_seconds: int = Field(
         default=300,
-        ge=1,
+        ge=0,
         le=86_400,
-        description="Maximum wait for a queued native subagent before it fails admission.",
+        description="Maximum wait for a queued native subagent before it fails admission (0 = unlimited).",
     )

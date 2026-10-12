@@ -7,23 +7,25 @@ Vox. It includes the full DeerFlow application, a
 [Python CLI](skills/public/telegram-research/references/vox-tools.md) for individual
 Vox read operations.
 
-The agent understands the question, proposes keywords, reads matching chats,
-then expands its search using vocabulary from messages, references to other
-groups, and key participants' observed public activity. It repeats this process
-until it has enough evidence to answer. The agent makes the research decisions;
-the CLI retrieves data and saves every successful result as JSON. By default it
-creates a unique file under `./vox-results/`; every data subcommand accepts
-`--output FILE` for a chosen new path. Existing files are never overwritten.
-Stdout contains only the absolute saved path, while diagnostics go to stderr.
-Agents keep their work and evidence on disk, inspect files selectively, and
-exchange explicit file paths rather than relying on summaries. Final reports
-present facts without links or filesystem references; internal evidence retains
-source URLs.
+The lead agent explores broadly through keyword searches and reads new leads
+from one shared JSON registry. Each depth subagent investigates one Telegram
+group (with a documented exception for a closely linked group cluster), saves
+at most one page of sourced facts, and contributes new keywords, relevant
+groups, external links, and public business contacts. Substantive participants'
+other public chats help discover new communities. Jev can help filter saved
+messages before the agent verifies the originals.
+
+The lead can generate a JSON task manifest on disk and submit it through
+`batch_task(items_file=...)`, then continue breadth research while depth agents
+run in parallel. Registry writes use a lock and atomic replacement; group
+claims prevent duplicate assignments. The skill applies to different topics;
+research choices and the stopping decision remain with the agents.
 
 Production on `openclaw-dp` uses `subagents.max_total_per_run: 1000`,
 `subagent_runtime.max_running: 32`, and `subagent_runtime.max_queued: 1000`.
 The total cap accepts values up to 1000; runtime capacity changes require a
-Gateway restart. Queue wait timeout remains 300 seconds.
+Gateway restart. On this deployment, execution and queue wait deadlines are
+disabled (`timeout_seconds: 0`, `queue_timeout_seconds: 0`); cancellation remains available.
 
 Follow [Quick Start](#quick-start) to configure a model and start the application.
 Supply `VOX_API_KEY` through the run's `config.context.secrets` so the skill can
@@ -1959,6 +1961,10 @@ An ordinary `task` also receives a defensive snapshot of the dispatching run's c
 Durable `batch_task` workers use one app-owned plugin snapshot for tool assembly and execution. Recovered tasks adopt the new worker's plugin snapshot after a Gateway restart; plugin objects are never stored in durable task records.
 
 Ordinary `task` delegation and explicit durable `batch_task` execution share the startup-scoped `subagent_runtime` process capacity. Batch mode keeps large independent item sets in SQL with separate total, live, and running limits, restart recovery, bounded results, and a thread-scoped Web UI panel. The panel pages through bounded previews on demand; bulk stored results are available through the owner-scoped JSONL export, while internal execution and authorization context never enters owner-facing responses. If the batch worker is later stopped or disabled, threads with persisted batches retain read-only item inspection and JSONL export; execution controls remain disabled until the worker is running again. See `config.example.yaml` and [the implementation contract](docs/plans/2026-08-24-subagent-batch-capacity-implementation.md) for limits and recovery semantics.
+
+For programmatic fan-out, the lead can generate a JSON array of `{ "key": "stable-id", "prompt": "self-contained task" }` entries with a sandbox script, then call `batch_task(title="Research", subagent_type="general-purpose", items_file="/mnt/user-data/workspace/items.json")`. Supply either `items_file` or inline `items`. The UTF-8 manifest is limited to 16 MiB and validated before native submission; the lead can continue independent work while children run. `subagent_batches.max_items_per_run` (default 1000) counts submitted items across all batches in the same lead run, including finished/cancelled items; a new run resets that budget. This batch budget and the ordinary `task` budget are separate.
+
+Set `subagents.timeout_seconds: 0` to let native built-in workers run without an elapsed-time deadline; per-agent `timeout_seconds: 0` does the same for custom or managed workers. Set `subagent_runtime.queue_timeout_seconds: 0` to let queued workers wait until a slot opens (requires Gateway restart). Positive values retain finite deadlines. Cancellation, per-call network/tool timeouts, turn budgets and token budgets remain active.
 
 While durable batch tools are available, a later owner turn can explicitly inspect selected results with `read_batch_result(batch_id, position=0, offset=0, max_chars=4000)`. The reader is restricted to the current user and thread, including in explicitly bound SDK graphs. It returns one window of a JSON document containing the stored report, execution/error state and separate acceptance criteria/verdict, without starting or waiting for work. Concatenate `content` windows before parsing: pass `next_offset` and the returned `revision` as `expected_revision` until `next_offset` is null. A changed item returns `restart_required`; discard prior windows and start at zero. Use `next_position` for a selected next item within `batch_status.total_items`. The maximum window is 8,192 characters; metadata shares the window budget, and JSON response framing adds overhead. `result_truncated` means storage already capped the report; continuation cannot recover discarded content. A succeeded item is not an accepted task, and unchecked criteria remain UNVERIFIED. No automatic result ingestion, waiting loop or UI change is added.
 

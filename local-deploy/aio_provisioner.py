@@ -127,11 +127,15 @@ class Provisioner:
             if not isinstance(port, str) or not port.isascii() or not port.isdigit() or not 1 <= int(port) <= 65535:
                 raise APIError(503, "Invalid sandbox port")
             url = f"http://127.0.0.1:{port}"
+        environment = dict(value.split("=", 1) for value in container["Config"].get("Env", []) if "=" in value)
+        capacity = environment.get("MAX_SHELL_SESSIONS", "10")
+        if not capacity.isascii() or not capacity.isdigit() or not 1 <= int(capacity) <= 65:
+            raise APIError(503, "Invalid sandbox shell capacity")
         return {
             "sandbox_id": container["Config"]["Labels"][LABEL + "sandbox_id"],
             "sandbox_url": url,
             "status": "Running" if running else "Stopped",
-            "max_shell_sessions": 10,
+            "max_shell_sessions": int(capacity),
         }
 
     def get(self, sandbox_id):
@@ -185,8 +189,9 @@ class Provisioner:
                 raise APIError(400, "Integration provisioning is forbidden")
         if type(payload.get("include_legacy_skills", False)) is not bool:
             raise APIError(400, "Invalid skills option")
-        if type(payload.get("max_shell_sessions", 10)) is not int or payload.get("max_shell_sessions", 10) != 10:
-            raise APIError(400, "Only ten shell sessions are supported")
+        # Native capacity supports up to 64 subagents, plus the lead's shell.
+        if type(payload.get("max_shell_sessions", 10)) is not int or not 1 <= payload.get("max_shell_sessions", 10) <= 65:
+            raise APIError(400, "Shell capacity must be an integer between 1 and 65")
 
     def create(self, payload):
         self.validate(payload)
@@ -221,7 +226,7 @@ class Provisioner:
                 "--env", "VOX_RELAY_URL=http://vox-relay:8083",
                 "--mount", f"type=bind,src={admission},dst=/var/lib/vox-admission",
                 "--env", "VOX_ADMISSION_DIR=/var/lib/vox-admission",
-                "--env", "HOME=/root", "--env", "USER=root", "--env", "MAX_SHELL_SESSIONS=10",
+                "--env", "HOME=/root", "--env", "USER=root", "--env", f"MAX_SHELL_SESSIONS={payload.get('max_shell_sessions', 10)}",
                 "--env", "OTEL_SDK_DISABLED=true", "--env", "NO_PROXY=localhost,127.0.0.1",
                 "--cap-add", "SETUID", "--cap-add", "SETGID",
                 "--entrypoint", "/usr/local/bin/python-server",
