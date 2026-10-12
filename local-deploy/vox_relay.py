@@ -625,7 +625,7 @@ class RelayHandler(BaseHTTPRequestHandler):
                 raise Rejected(400)
         return path, body
 
-    def do_request(self):
+    def prepare_request(self):
         try:
             path, body = self.validate()
         except Rejected as exc:
@@ -650,6 +650,14 @@ class RelayHandler(BaseHTTPRequestHandler):
             except (ValueError, TypeError):
                 self.reply(400)
                 return
+        return path, body
+
+    def do_request(self):
+        prepared = self.prepare_request()
+        if prepared is None:
+            return
+        path, body = prepared
+        observation = self.server.observations.current
         self.connection.settimeout(self.server.options["socket_idle"])
         if path in {"/health", "/status"}:
             try:

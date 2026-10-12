@@ -40,6 +40,10 @@ Example request:
 record the live runs and what they do and do not demonstrate. Local credentials
 and raw research outputs are not included in this repository.
 
+An opt-in [dynamic Vox relay](local-deploy/VOX_DYNAMIC_ADMISSION.md) adjusts
+concurrency from observed latency and errors. It is developed and tested locally;
+it has not been deployed, and synthetic speed comparisons are not live Vox results.
+
 The application documentation below is inherited from DeerFlow. Upstream
 attribution and the [MIT license](LICENSE) are preserved.
 

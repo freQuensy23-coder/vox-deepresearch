@@ -1,4 +1,8 @@
-# Trusted Vox relay rates
+# Baseline Vox relay: fixed concurrency and adaptive spacing
+
+This describes the earlier relay. The separate, locally tested dynamic
+concurrency implementation is documented in [VOX_DYNAMIC_ADMISSION.md](VOX_DYNAMIC_ADMISSION.md).
+Its addition does not deploy it or change the running baseline.
 
 Rate-only port from TG-OSINT `tg-collect-v3.py`, SHA256 `b8569cf1d2f1f174cc64450ca743bac4f4f1f06bda44f2fd2d5fd8f775e77026`; resolved source configuration: five workers, 0.25-second base gap.
 

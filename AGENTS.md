@@ -210,6 +210,7 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 ## Where to Go Next
 
 - Backend work → **[backend/AGENTS.md](backend/AGENTS.md)**
+- Vox relay admission → **[local-deploy/VOX_DYNAMIC_ADMISSION.md](local-deploy/VOX_DYNAMIC_ADMISSION.md)**; local fixtures and a separate opt-in relay, outside the agent loop.
 - Frontend work → **[frontend/AGENTS.md](frontend/AGENTS.md)**
 - Setup & install → **[Install.md](Install.md)**, **[CONTRIBUTING.md](CONTRIBUTING.md)**
 - Project overview & usage → **[README.md](README.md)** (translations: `README_zh.md`,
