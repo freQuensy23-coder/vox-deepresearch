@@ -605,6 +605,17 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
     effective_model_settings = dict(model_settings_from_config)
     effective_model_settings.update({key: value for key, value in kwargs.items() if value is not None})
     model_instance = model_class(**effective_model_settings)
+    from deerflow.models.local_trace import LocalLLMTraceCallback, instrument_cancellation, instrument_provider_wire
+
+    local_callbacks = getattr(model_instance, 'callbacks', None)
+    if local_callbacks is None:
+        object.__setattr__(model_instance, 'callbacks', [LocalLLMTraceCallback(effective_model_settings)])
+    elif isinstance(local_callbacks, list):
+        model_instance.callbacks = [*local_callbacks, LocalLLMTraceCallback(effective_model_settings)]
+    else:
+        local_callbacks.add_handler(LocalLLMTraceCallback(effective_model_settings), inherit=True)
+    instrument_cancellation(model_instance)
+    effective_model_settings['local_trace_wire_coverage'] = instrument_provider_wire(model_instance)
 
     if translate_context_window:
         # Applied *after* construction and merged into the provider's inferred

@@ -1,0 +1,2 @@
+FROM local/vox-deepresearch-gateway:93c83803
+COPY backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py /app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py

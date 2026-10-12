@@ -214,6 +214,22 @@ class RemoteSandboxBackend(SandboxBackend):
         """Destroy a sandbox Pod + Service via the provisioner."""
         self._provisioner_destroy(info.sandbox_id)
 
+    def destroy_strict(self, info: SandboxInfo) -> None:
+        url = f"{self._provisioner_url}/api/sandboxes/{info.sandbox_id}"
+        try:
+            response = requests.delete(url, headers=self._auth_headers(), timeout=15)
+            if response.status_code == 404:
+                verification = requests.get(url, headers=self._auth_headers(), timeout=10)
+                if verification.status_code == 404:
+                    return
+            elif response.status_code == 200:
+                payload = response.json()
+                if isinstance(payload, dict) and payload.get("sandbox_id") == info.sandbox_id and payload.get("status") == "Deleted":
+                    return
+        except (requests.RequestException, ValueError) as exc:
+            raise RuntimeError(f"Sandbox deletion unconfirmed for {info.sandbox_id}") from exc
+        raise RuntimeError(f"Sandbox deletion unconfirmed for {info.sandbox_id}: HTTP {response.status_code}")
+
     def is_alive(self, info: SandboxInfo) -> bool:
         """Check whether the sandbox Pod is running."""
         return self._provisioner_is_alive(info.sandbox_id)

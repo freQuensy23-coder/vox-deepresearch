@@ -39,6 +39,7 @@ from langgraph.types import Overwrite
 
 from deerflow.agents.goal_state import GoalEvaluation, GoalState
 from deerflow.agents.interaction_policy import RunInteractionPolicy, resolve_run_interaction_policy
+from deerflow.agents.middlewares.graph_budget_middleware import GRAPH_BUDGET_YIELD, is_graph_budget_yield
 from deerflow.agents.middlewares.input_sanitization_middleware import neutralize_untrusted_tags
 from deerflow.config.app_config import AppConfig
 from deerflow.config.database_config import CheckpointChannelMode
@@ -1376,6 +1377,8 @@ async def run_agent(
 
         async def _stream_once(input_payload: Any, stream_config: RunnableConfig) -> None:
             nonlocal llm_error_fallback_message
+            if isinstance(runtime_ctx, dict):
+                runtime_ctx.pop(GRAPH_BUDGET_YIELD, None)
             file_tool_chunk_batcher = _LargeFileToolChunkBatcher() if "messages-tuple" in requested_modes else None
             try:
                 async with _checkpoint_thread_lock(thread_id):
@@ -1584,6 +1587,9 @@ async def run_agent(
                 produced_output_paths,
             )
             delivery_error = _delivery_error(delivery_content)
+            if runtime_context is not None and runtime_context.get(GRAPH_BUDGET_YIELD):
+                delivery_error = "Graph-step budget yielded incomplete work; no further goal continuation was admitted."
+                stop_reason = stop_reason or "graph_budget_capped"
             cancel_action = await run_manager.set_status_if_not_cancelled(
                 run_id,
                 RunStatus.error if delivery_error else RunStatus.success,
@@ -2379,8 +2385,10 @@ async def _prepare_goal_continuation_input(
             return None
         checkpoint_id_before = _checkpoint_id(checkpoint_tuple)
         messages = await _materialized_checkpoint_messages(accessor, thread_id)
+        budget_yielded = bool(messages and is_graph_budget_yield(messages[-1]))
         conversation_signature_before = visible_conversation_signature(messages)
-        evidence_signature = latest_visible_assistant_signature(messages)
+        evidence_messages = [message for message in messages if not is_graph_budget_yield(message)] if budget_yielded else messages
+        evidence_signature = latest_visible_assistant_signature(evidence_messages)
 
         if _ends_on_human_input_request(messages):
             # The agent asked the user something. Continuing would tell it to keep
@@ -2417,6 +2425,7 @@ async def _prepare_goal_continuation_input(
         evaluation = await evaluate_goal_completion(
             goal,
             messages,
+            run_id=run_id,
             model=evaluator_model,
             model_name=model_name,
             app_config=app_config,
@@ -2447,6 +2456,13 @@ async def _prepare_goal_continuation_input(
     if abort_event is not None and abort_event.is_set():
         return None
 
+    if budget_yielded and evaluation["satisfied"]:
+        evaluation = GoalEvaluation(
+            satisfied=False,
+            blocker="goal_not_met_yet",
+            reason="The graph budget yielded unfinished work, not a completed assistant turn.",
+            evidence_summary=evaluation.get("evidence_summary", ""),
+        )
     no_progress_count = compute_no_progress_count(goal, evaluation, evidence_signature=evidence_signature)
 
     # Re-check that neither the goal nor the visible conversation changed while the
@@ -2472,6 +2488,8 @@ async def _prepare_goal_continuation_input(
         return _GoalCompletionCandidate(copy.deepcopy(current_goal), conversation_signature_before, evaluation)
 
     stand_down_reason = _stand_down_reason(goal, evaluation, no_progress_count)
+    if stand_down_reason is None and budget_yielded and run_stop_reason:
+        stand_down_reason = run_stop_reason
     if stand_down_reason is None and run_stop_reason == "token_capped":
         # The run already used up its token budget, and continuations share that
         # budget, so another hidden turn would spend one more model call only to

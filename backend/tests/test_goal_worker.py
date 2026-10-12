@@ -1,6 +1,8 @@
 import asyncio
 import copy
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from deerflow_extension_api import ExtensionData
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -782,10 +784,13 @@ class _FailingEvaluatorModel:
     [
         (ConnectionError("Connection error: request-detail-7f3a"), "ConnectionError"),
         ('{"satisfied": false "blocker": "request-detail-7f3a"}', "ValueError"),
+        (httpx.HTTPStatusError("request-detail-7f3a", request=httpx.Request("POST", "https://offline.invalid"), response=httpx.Response(503)), "HTTPStatusError"),
     ],
-    ids=["provider-error", "malformed-json"],
+    ids=["provider-error", "malformed-json", "persistent-503"],
 )
-async def test_goal_worker_records_a_failed_evaluator_call(outcome, error_type, after_earlier_evaluation):
+async def test_goal_worker_records_a_failed_evaluator_call(outcome, error_type, after_earlier_evaluation, monkeypatch):
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    model = _FailingEvaluatorModel(outcome)
     checkpointer = InMemorySaver()
     thread_id = "evaluator-failed-thread"
     await _seed_goal_thread(checkpointer, thread_id=thread_id, goal_text="Finish all tests")
@@ -803,9 +808,10 @@ async def test_goal_worker_records_a_failed_evaluator_call(outcome, error_type, 
         run_id="run-8",
         model_name="test-model",
         app_config=None,
-        evaluator_model_factory=lambda: _FailingEvaluatorModel(outcome),
+        evaluator_model_factory=lambda: model,
     )
 
+    assert model.calls == (3 if error_type == "HTTPStatusError" else 1)
     assert continuation is None
     latest_goal = await read_thread_goal(checkpointer, thread_id)
     assert latest_goal is not None

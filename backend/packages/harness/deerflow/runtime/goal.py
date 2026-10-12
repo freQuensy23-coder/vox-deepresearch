@@ -19,6 +19,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal, NamedTuple
 from uuid import uuid4
 
+import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.base import empty_checkpoint, uuid6
 
@@ -46,6 +47,7 @@ MAX_GOAL_CONVERSATION_MESSAGES = 30
 MAX_GOAL_TOOL_VALUE_CHARS = 200
 MAX_GOAL_TOOL_STEP_CHARS = 600
 MAX_GOAL_REQUEST_CHARS = 2000
+MAX_GOAL_EVALUATOR_ATTEMPTS = 3
 # Evidence line for a user's answer to a Human Input Card; unlike "User: " lines it is not a request.
 GOAL_CARD_ANSWER_PREFIX = "User (Human Input Card answer): "
 
@@ -409,6 +411,7 @@ async def evaluate_goal_completion(
     extensions: Any | None = None,
     interaction_policy: RunInteractionPolicy | None = None,
     usage_callback: Callable[[list[dict[str, int | str | None]]], None] | None = None,
+    run_id: str | None = None,
 ) -> GoalEvaluation:
     """Ask a small non-thinking model whether the active goal is satisfied.
 
@@ -453,7 +456,7 @@ async def evaluate_goal_completion(
 
     if model is None:
         model = create_goal_evaluator_model(model_name=model_name, app_config=app_config)
-    invoke_config: dict[str, Any] = {"run_name": "goal_evaluator"}
+    invoke_config: dict[str, Any] = {"run_name": "goal_evaluator", "metadata": {"run_id": run_id, "thread_id": thread_id, "operation": "goal_evaluator"}}
     if usage_callback is not None:
         # This critic must not inherit graph callbacks: its usage crosses the
         # explicit sink once and its response never enters visible history.
@@ -471,20 +474,24 @@ async def evaluate_goal_completion(
         SystemMessage(content=system_instruction),
         HumanMessage(content=user_content),
     ]
-    source_id = "goal-evaluator:" + uuid4().hex
 
     async def invoke_with_usage() -> Any:
-        try:
-            response = await model.ainvoke(prompt_messages, config=invoke_config)
-        except BaseException as exc:
+        for attempt in range(MAX_GOAL_EVALUATOR_ATTEMPTS):
+            source_id = "goal-evaluator:" + uuid4().hex
+            try:
+                response = await model.ainvoke(prompt_messages, config=invoke_config)
+            except BaseException as exc:
+                if usage_callback is not None:
+                    usage_callback([_goal_evaluator_usage_record(exc, source_id=source_id, model_name=model_name, model=model)])
+                if not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code not in {502, 503, 504} or attempt + 1 >= MAX_GOAL_EVALUATOR_ATTEMPTS:
+                    raise
+                await asyncio.sleep(2**attempt)
+                continue
             if usage_callback is not None:
-                usage_callback([_goal_evaluator_usage_record(exc, source_id=source_id, model_name=model_name, model=model)])
-            raise
-        if usage_callback is not None:
-            # Account before observers or verdict parsing can fail; both may
-            # reject a response after the provider has already spent tokens.
-            usage_callback([_goal_evaluator_usage_record(response, source_id=source_id, model_name=model_name, model=model)])
-        return response
+                # Account before observers or verdict parsing can fail; both may
+                # reject a response after the provider has already spent tokens.
+                usage_callback([_goal_evaluator_usage_record(response, source_id=source_id, model_name=model_name, model=model)])
+            return response
 
     if extensions is None:
         response = await invoke_with_usage()

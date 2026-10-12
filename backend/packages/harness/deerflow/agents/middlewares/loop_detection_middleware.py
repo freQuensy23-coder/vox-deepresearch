@@ -230,12 +230,15 @@ def _hash_tool_calls(tool_calls: list[dict]) -> str:
 _WARNING_MSG = "[LOOP DETECTED] You are repeating the same tool calls. Stop calling tools and produce your final answer now. If you cannot complete the task, summarize what you accomplished so far."
 
 _TOOL_FREQ_WARNING_MSG = (
-    "[LOOP DETECTED] You have called {tool_name} {count} times without producing a final answer. Stop calling tools and produce your final answer now. If you cannot complete the task, summarize what you accomplished so far."
+    "[TOOL FREQUENCY NOTICE] You have called {tool_name} {count} times. Frequency alone does not establish a loop. "
+    "Assess whether these calls are making progress toward the task and preserve verified results, artifacts, and unfinished work. "
+    "Continue useful, distinct tool calls within the remaining runtime and tool budgets; avoid redundant calls and unnecessary polling. "
+    "This notice is not a stop instruction or evidence that the task is complete."
 )
 
-_HARD_STOP_MSG = "[FORCED STOP] Repeated tool calls exceeded the safety limit. Producing final answer with results collected so far."
+_HARD_STOP_MSG = "[FORCED STOP] Repeated tool calls exceeded the safety limit. No further tools will run. This safety stop is not a completed report; any collected artifacts may be incomplete."
 
-_TOOL_FREQ_HARD_STOP_MSG = "[FORCED STOP] Tool {tool_name} called {count} times — exceeded the per-tool safety limit. Producing final answer with results collected so far."
+_TOOL_FREQ_HARD_STOP_MSG = "[FORCED STOP] Tool {tool_name} called {count} times — exceeded the per-tool safety limit. No further tools will run. This safety stop is not a completed report; any collected artifacts may be incomplete."
 
 
 @dataclass(frozen=True)

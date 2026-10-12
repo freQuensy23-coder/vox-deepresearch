@@ -5,6 +5,7 @@ import io
 import json
 import urllib.error
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
@@ -19,10 +20,21 @@ vox = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vox)
 
 
+@pytest.fixture(autouse=True)
+def isolated_working_directory(monkeypatch, tmp_path, tmp_path_factory):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VOX_ADMISSION_DIR", str(tmp_path_factory.mktemp("vox-admission")))
+
+
 @pytest.fixture
 def transport(monkeypatch):
     monkeypatch.setenv("VOX_API_KEY", "synthetic-test-credential")
-    monkeypatch.setattr("time.sleep", lambda _: None)
+    clock = [1800000000.0]
+
+    def sleep(seconds):
+        clock[0] += seconds
+
+    monkeypatch.setattr(vox, "time", SimpleNamespace(time=lambda: clock[0], monotonic=lambda: clock[0], sleep=sleep))
     requests = []
     responses = []
 
@@ -41,7 +53,9 @@ def transport(monkeypatch):
 
 def run_cli(capsys, *args):
     invoke(list(args))
-    return json.loads(capsys.readouterr().out)
+    path = Path(capsys.readouterr().out.strip())
+    assert path.is_absolute()
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def invoke(args):
@@ -83,7 +97,7 @@ def test_search_preserves_evidence_author_links_and_partial_cursor(transport, ca
     )
     out = run_cli(
         capsys,
-        "search",
+        "search-page",
         "подработка",
         "--limit",
         "20",
@@ -112,10 +126,46 @@ def test_search_preserves_evidence_author_links_and_partial_cursor(transport, ca
 def test_explicit_text_preview_marks_truncation(transport, capsys):
     _, responses = transport
     responses.append({"messages": [{"text": "abcdef", "user_id": 7}], "count": 1})
-    out = run_cli(capsys, "search", "abc", "--max-chars", "3")
+    out = run_cli(capsys, "search-page", "abc", "--max-chars", "3")
     assert out["messages"][0]["text_truncated"] is True
     assert out["messages"][0]["text_length"] == 6
     assert out["messages"][0]["text"].startswith("abc")
+
+
+def test_search_can_use_documented_nonstreaming_json_transport(transport, capsys):
+    requests, responses = transport
+    final = {
+        "messages": [{"id": 7, "group_id": -10012345, "text": "professional discussion"}],
+        "count": 1,
+        "stop_reason": "timeout",
+        "stopped_at": "2026-04-11T19:10:40Z",
+    }
+    responses.append(final)
+    out = run_cli(capsys, "search-page", "work", "--stream", "false", "--timeout", "60")
+    params = parse_qs(urlsplit(requests[0].full_url).query)
+    assert params["stream"] == ["false"]
+    assert out["messages"] == final["messages"]
+    assert out["count"] == final["count"]
+    assert out["stop_reason"] == final["stop_reason"]
+    assert out["stopped_at"] == final["stopped_at"]
+    assert out["group_summary"][0]["message_indices"] == [0]
+
+
+def test_search_socket_timeout_allows_the_requested_server_budget(
+    transport, capsys, monkeypatch
+):
+    _, responses = transport
+    responses.append({"messages": [], "count": 0, "stop_reason": "finished"})
+    timeouts = []
+    open_request = vox.OPENER.open
+
+    def capture_timeout(req, timeout):
+        timeouts.append(timeout)
+        return open_request(req, timeout)
+
+    monkeypatch.setattr(vox.OPENER, "open", capture_timeout)
+    run_cli(capsys, "search-page", "work", "--timeout", "600")
+    assert timeouts == [630]
 
 
 def test_search_consumes_progress_until_final_result_and_then_stops(transport, capsys):
@@ -131,7 +181,7 @@ def test_search_consumes_progress_until_final_result_and_then_stops(transport, c
         + json.dumps(final).encode("utf-8")
         + b"\nnot part of the completed response"
     )
-    out = run_cli(capsys, "search", "work", "--timeout", "600")
+    out = run_cli(capsys, "search-page", "work", "--timeout", "600")
     params = parse_qs(urlsplit(requests[0].full_url).query)
     assert params["stream"] == ["true"]
     assert params["timeout"] == ["600"]
@@ -147,14 +197,14 @@ def test_search_stream_without_final_result_is_not_an_empty_success(transport, b
     requests, responses = transport
     responses.extend([body, body])
     with pytest.raises(SystemExit):
-        invoke(["search", "work"])
+        invoke(["search-page", "work"])
     assert len(requests) == (1 if b'"error"' in body else 2)
 
 
 def test_search_retries_a_stream_closed_after_progress(transport, capsys):
     requests, responses = transport
     responses.extend([b'{"point":0}\n', {"messages": [{"id": 7}], "count": 1}])
-    out = run_cli(capsys, "search", "work")
+    out = run_cli(capsys, "search-page", "work")
     assert out["messages"][0]["id"] == 7
     assert len(requests) == 2
 
@@ -162,14 +212,14 @@ def test_search_retries_a_stream_closed_after_progress(transport, capsys):
 @pytest.mark.parametrize(
     "args",
     [
-        ["search", "x", "--offset", "50"],
-        ["search", "x", "--phrase"],
-        ["search", "x", "--lang", "ru"],
-        ["search", "x", "--limit", "0"],
-        ["search", "x", "--limit", "10001"],
-        ["search", "x" * 50],
-        ["search", "x", "--from", "2026-10-32"],
-        ["search", "x", "--from", "2026-10-01", "--to", "2026-09-01"],
+        ["search-page", "x", "--offset", "50"],
+        ["search-page", "x", "--phrase"],
+        ["search-page", "x", "--lang", "ru"],
+        ["search-page", "x", "--limit", "0"],
+        ["search-page", "x", "--limit", "10001"],
+        ["search-page", "x" * 50],
+        ["search-page", "x", "--from", "2026-10-32"],
+        ["search-page", "x", "--from", "2026-10-01", "--to", "2026-09-01"],
         ["user-chats", "-100123"],
         ["posts", "https://example.com/chat"],
         ["posts", "https://t.me/+privateInvite"],
@@ -353,12 +403,12 @@ def test_secrets_missing_and_errors_do_not_dump_response(
         )
     )
     with pytest.raises(SystemExit):
-        invoke(["search", "abc"])
+        invoke(["search-page", "abc"])
     assert "synthetic-test-credential" not in capsys.readouterr().err
     monkeypatch.delenv("VOX_API_KEY")
     monkeypatch.setattr(vox, "KEY_FILE", tmp_path / "missing")
     with pytest.raises(SystemExit):
-        invoke(["search", "abc"])
+        invoke(["search-page", "abc"])
 
 
 def test_single_attempt_can_be_requested_explicitly(transport):
@@ -369,7 +419,7 @@ def test_single_attempt_can_be_requested_explicitly(transport):
         )
     )
     with pytest.raises(SystemExit):
-        invoke(["--attempts", "1", "search", "abc"])
+        invoke(["--attempts", "1", "search-page", "abc"])
     assert len(requests) == 1
 
 
@@ -378,9 +428,10 @@ def test_disconnect_is_retried_once_with_a_visible_diagnostic(transport, capsys)
     responses.extend(
         [ConnectionResetError(), {"messages": [{"id": 9, "text": "work"}], "count": 1}]
     )
-    invoke(["search", "work"])
+    invoke(["search-page", "work"])
     captured = capsys.readouterr()
-    assert json.loads(captured.out)["messages"][0]["id"] == 9
+    saved = json.loads(Path(captured.out.strip()).read_text(encoding="utf-8"))
+    assert saved["messages"][0]["id"] == 9
     assert "retry" in captured.err.lower()
     assert "synthetic-test-credential" not in captured.err
     assert len(requests) == 2
@@ -391,7 +442,7 @@ def test_transient_retry_is_bounded(transport):
     requests, responses = transport
     responses.extend([TimeoutError(), TimeoutError()])
     with pytest.raises(SystemExit):
-        invoke(["search", "work"])
+        invoke(["search-page", "work"])
     assert len(requests) == 2
 
 
@@ -401,7 +452,7 @@ def test_scoped_search_checks_public_card_and_preserves_zero_params(transport, c
         [public_card(), {"messages": [], "count": 0, "stop_reason": "finished"}]
     )
     run_cli(
-        capsys, "search", "work", "--include", "-10012345", "--exclude-users", "98765"
+        capsys, "search-page", "work", "--include", "-10012345", "--exclude-users", "98765"
     )
     assert urlsplit(requests[0].full_url).path == "/groups/-10012345"
     params = parse_qs(urlsplit(requests[1].full_url).query)
@@ -473,7 +524,7 @@ def test_malformed_credential_is_rejected_without_echo_or_request(
     requests, _ = transport
     monkeypatch.setenv("VOX_API_KEY", "synthetic-secret\nsecond-secret-line")
     with pytest.raises(SystemExit):
-        invoke(["search", "work"])
+        invoke(["search-page", "work"])
     captured = capsys.readouterr()
     assert "synthetic-secret" not in captured.err + captured.out
     assert "second-secret-line" not in captured.err + captured.out
@@ -488,7 +539,7 @@ def test_saved_public_card_avoids_repeating_group_lookup(transport, capsys, tmp_
         {"messages": [{"group_id": -10012345, "id": 8, "text": "work"}], "count": 1}
     )
     out = run_cli(
-        capsys, "search", "work", "--include", "-10012345", "--public-card", str(card)
+        capsys, "search-page", "work", "--include", "-10012345", "--public-card", str(card)
     )
     assert out["messages"][0]["id"] == 8
     assert len(requests) == 1
@@ -545,9 +596,9 @@ def test_search_large_limit_preserves_messages_and_groups(transport, capsys, lim
     ]
     responses.append({"messages": messages, "count": 999, "stop_reason": "timeout"})
     args = [] if limit is None else ["--limit", str(limit)]
-    out = run_cli(capsys, "search", "подработка", *args)
+    out = run_cli(capsys, "search-page", "подработка", *args)
     assert parse_qs(urlsplit(requests[0].full_url).query)["limit"] == [
-        str(limit or 200)
+        str(limit or 2000)
     ]
     assert out["messages"] == messages
     assert out["returned_count"] == 200
@@ -575,9 +626,255 @@ def test_search_summary_counts_only_retained_messages(transport, capsys):
             ]
         }
     )
-    out = run_cli(capsys, "search", "work")
+    out = run_cli(capsys, "search-page", "work")
     assert len(out["group_summary"]) == 1
     assert out["group_summary"][0]["message_count"] == 3
     assert out["group_summary"][0]["unique_author_count"] == 1
     assert out["ungrouped_count"] == 1
     assert out["returned_count"] == 4
+
+
+@pytest.mark.parametrize("output_mode", ["default", "relative", "absolute"])
+@pytest.mark.parametrize(
+    "args, upstream, expected",
+    [
+        (
+            ["search-page", "work"],
+            [{"messages": [], "count": 0, "stop_reason": "timeout"}],
+            {
+                "messages": [],
+                "count": 0,
+                "stop_reason": "timeout",
+                "returned_count": 0,
+                "group_summary": [],
+                "ungrouped_count": 0,
+                "public_access": "check_group_cards",
+            },
+        ),
+        (
+            ["groups", "work"],
+            [[{"id": -10012345, "name": "Синтетический чат"}]],
+            {
+                "candidates": [{"id": -10012345, "name": "Синтетический чат"}],
+                "evidence_type": "ai_discovery",
+                "public_access": "check_group_cards",
+            },
+        ),
+        (
+            ["group-preview", "work"],
+            [{"run_parser": False, "groups": []}],
+            {
+                "run_parser": False,
+                "groups": [],
+                "evidence_type": "group_discovery_not_primary_evidence",
+                "public_access": "check_group_cards",
+            },
+        ),
+        (
+            ["group", "-10012345"],
+            [public_card()],
+            {
+                **public_card(),
+                "name": None,
+                "members_count": None,
+                "about": None,
+                "public_access": "public_alias",
+                "url": "https://t.me/example_chat",
+            },
+        ),
+        (
+            ["resolve", "-10012345"],
+            [public_card()],
+            {
+                "input": "-10012345",
+                "group_id": -10012345,
+                "public_access": "public_alias",
+            },
+        ),
+        (
+            ["posts", "-10012345"],
+            [public_card(), {"posts": ["Синтетическое сообщение"]}],
+            {
+                "posts": ["Синтетическое сообщение"],
+                "evidence_type": "undated_text_sample",
+            },
+        ),
+        (
+            ["analytics", "-10012345"],
+            [public_card(), {"report": "Синтетическое описание"}],
+            {
+                "data": {"report": "Синтетическое описание"},
+                "evidence_type": "ai_summary_not_primary_evidence",
+            },
+        ),
+        (
+            ["user-chats", "98765"],
+            [{"ok": True, "rows": []}],
+            {
+                "ok": True,
+                "rows": [],
+                "returned_count": 0,
+                "locally_truncated": False,
+                "public_access": "check_group_cards",
+                "evidence_type": "indexed_presence_not_current_membership",
+            },
+        ),
+        (
+            ["user-messages", "98765", "--group", "-10012345"],
+            [public_card(), {"ok": True, "rows": []}],
+            {
+                "ok": True,
+                "rows": [],
+                "returned_count": 0,
+                "group_id": -10012345,
+                "scope_note": (
+                    "Filtered from a capped cross-chat panel; zero rows does not prove no activity in this group."
+                ),
+            },
+        ),
+    ],
+)
+def test_every_data_command_saves_json_with_path_only_receipt(
+    transport, capsys, tmp_path, args, upstream, expected, output_mode
+):
+    _, responses = transport
+    responses.extend(upstream)
+    options = []
+    target = tmp_path / "selected results" / "ответ.json"
+    if output_mode != "default":
+        output = target if output_mode == "absolute" else target.relative_to(tmp_path)
+        options = ["--output", str(output)]
+    invoke([*args, *options])
+    captured = capsys.readouterr()
+    assert len(captured.out.splitlines()) == 1
+    saved = Path(captured.out.strip())
+    assert saved.is_absolute()
+    assert captured.out == f"{saved}\n"
+    if output_mode == "default":
+        assert saved.parent == tmp_path / "vox-results"
+        assert saved.suffix == ".json"
+    else:
+        assert saved == target
+    assert json.loads(saved.read_text(encoding="utf-8")) == expected
+    assert list(saved.parent.iterdir()) == [saved]
+    assert captured.err == ""
+
+
+def test_default_outputs_are_unique_and_preserve_full_payload(
+    transport, capsys, tmp_path
+):
+    _, responses = transport
+    candidate = {"id": -10012345, "text": "Полный текст " * 10000}
+    responses.extend([[candidate], []])
+    invoke(["groups", "work"])
+    first = Path(capsys.readouterr().out.strip())
+    assert first.is_absolute()
+    first_bytes = first.read_bytes()
+    invoke(["groups", "work"])
+    second = Path(capsys.readouterr().out.strip())
+    assert second.is_absolute()
+    assert first != second
+    assert first.read_bytes() == first_bytes
+    assert json.loads(first_bytes)["candidates"] == [candidate]
+    assert json.loads(second.read_text(encoding="utf-8"))["candidates"] == []
+    assert set((tmp_path / "vox-results").iterdir()) == {first, second}
+
+
+@pytest.mark.parametrize("existing_kind", ["file", "symlink", "dangling_symlink"])
+def test_output_never_overwrites_existing_paths(
+    transport, capsys, tmp_path, existing_kind
+):
+    _, responses = transport
+    responses.append([])
+    target = tmp_path / "result.json"
+    original = tmp_path / "original.json"
+    if existing_kind == "file":
+        target.write_text("existing evidence", encoding="utf-8")
+    else:
+        if existing_kind == "symlink":
+            original.write_text("existing evidence", encoding="utf-8")
+        target.symlink_to(original)
+    with pytest.raises(SystemExit) as err:
+        invoke(["groups", "work", "--output", str(target)])
+    assert err.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    if existing_kind == "dangling_symlink":
+        assert target.is_symlink()
+        assert not original.exists()
+    else:
+        assert target.read_text(encoding="utf-8") == "existing evidence"
+    assert set(tmp_path.iterdir()) == (
+        {target, original} if existing_kind == "symlink" else {target}
+    )
+
+
+@pytest.mark.parametrize("explicit_output", [False, True])
+@pytest.mark.parametrize(
+    "body", [b'{"point":0}\n', b"invalid JSON", {"error": "unavailable"}]
+)
+def test_failed_reads_leave_no_result_or_success_receipt(
+    transport, capsys, tmp_path, explicit_output, body
+):
+    _, responses = transport
+    responses.extend([body, body])
+    options = ["--output", str(tmp_path / "result.json")] if explicit_output else []
+    with pytest.raises(SystemExit) as err:
+        invoke(["search-page", "work", *options])
+    assert err.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+def test_output_parent_error_is_nonzero_without_payload(transport, capsys, tmp_path):
+    _, responses = transport
+    responses.append([])
+    parent = tmp_path / "not-a-directory"
+    parent.write_text("existing evidence", encoding="utf-8")
+    with pytest.raises(SystemExit) as err:
+        invoke(["groups", "work", "--output", str(parent / "result.json")])
+    assert err.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert parent.read_text(encoding="utf-8") == "existing evidence"
+    assert list(tmp_path.iterdir()) == [parent]
+
+
+def test_output_publication_error_leaves_no_partial_result(
+    transport, capsys, tmp_path, monkeypatch
+):
+    _, responses = transport
+    responses.append([])
+
+    def fail_link(*args, **kwargs):
+        raise OSError("synthetic disk failure")
+
+    monkeypatch.setattr(vox.os, "link", fail_link)
+    with pytest.raises(SystemExit) as err:
+        invoke(["groups", "work", "--output", str(tmp_path / "result.json")])
+    assert err.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_research_instructions_require_disk_handoffs_and_link_free_final_report():
+    skill = (SCRIPT.parents[1] / "SKILL.md").read_text(encoding="utf-8")
+    reference = (SCRIPT.parents[1] / "references/vox-tools.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Все рабочие материалы и доказательства сохраняй на диск" in skill
+    assert "Передавай между агентами явные абсолютные пути к файлам" in skill
+    assert "выборочный поиск по файлам" in skill
+    assert "Итоговый ответ пользователю — факты без ссылок" in skill
+    assert "локальные пути" in skill
+    assert "URL первоисточников" in skill
+    assert "--output FILE" in reference
+    assert "stdout содержит только абсолютный путь" in reference
+    assert "Сохраняй stdout в JSON-файл" not in reference
+    assert "stdout содержит только итоговый JSON" not in reference

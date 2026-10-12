@@ -188,7 +188,10 @@ async def compact_thread_context(
         # ``raise_on_failure`` is independent of ``force``: a manual caller always wants
         # a generation failure surfaced (even a force=False call that met the threshold),
         # so it must not collapse into the force=False "nothing to compact" branch below.
-        result = await middleware.acompact_state(state, runtime, force=force, raise_on_failure=True)  # type: ignore[arg-type]
+        from deerflow.models.local_trace import trace_scope
+
+        with trace_scope(thread_id=thread_id, checkpoint_ns="", operation="manual_compaction"):
+            result = await middleware.acompact_state(state, runtime, force=force, raise_on_failure=True)
     except SummaryGenerationError as exc:
         # A compressible thread whose summary LLM failed (after the run-model fallback)
         # is a real failure, distinct from "nothing to compact". Route it to the

@@ -1773,7 +1773,8 @@ class TestToolFrequencyDetection:
         queued = mw._pending_warnings.get(_pending_key(), [])
         assert queued
         assert "read_file" in queued[0]
-        assert "LOOP DETECTED" in queued[0]
+        assert "TOOL FREQUENCY NOTICE" in queued[0]
+        assert "Stop calling tools" not in queued[0]
 
     def test_freq_warn_only_queued_once(self):
         mw = LoopDetectionMiddleware(tool_freq_warn=3, tool_freq_hard_limit=10)
@@ -1903,7 +1904,7 @@ class TestToolFrequencyDetection:
         # thread-B state should still be intact — 3rd call queues a warn.
         result = mw._apply(_make_state(tool_calls=[self._read_call("/b_2.py")]), runtime_b)
         assert result is None
-        assert "LOOP DETECTED" in mw._pending_warnings[_pending_key("thread-B")][0]
+        assert "TOOL FREQUENCY NOTICE" in mw._pending_warnings[_pending_key("thread-B")][0]
 
         # thread-A restarted from 0 — should not trigger
         result = mw._apply(_make_state(tool_calls=[self._read_call("/a_new.py")]), runtime_a)
@@ -1926,7 +1927,7 @@ class TestToolFrequencyDetection:
         # 3rd call on thread A — queues a warning (count=3 for thread A only).
         result = mw._apply(_make_state(tool_calls=[self._read_call("/file_2.py")]), runtime_a)
         assert result is None
-        assert "LOOP DETECTED" in mw._pending_warnings[_pending_key("thread-A")][0]
+        assert "TOOL FREQUENCY NOTICE" in mw._pending_warnings[_pending_key("thread-A")][0]
         assert not mw._pending_warnings.get(_pending_key("thread-B"))
 
     def test_freq_counter_cleared_on_eviction(self):

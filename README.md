@@ -11,7 +11,14 @@ The agent understands the question, proposes keywords, reads matching chats,
 then expands its search using vocabulary from messages, references to other
 groups, and key participants' observed public activity. It repeats this process
 until it has enough evidence to answer. The agent makes the research decisions;
-the CLI retrieves data.
+the CLI retrieves data and saves every successful result as JSON. By default it
+creates a unique file under `./vox-results/`; every data subcommand accepts
+`--output FILE` for a chosen new path. Existing files are never overwritten.
+Stdout contains only the absolute saved path, while diagnostics go to stderr.
+Agents keep their work and evidence on disk, inspect files selectively, and
+exchange explicit file paths rather than relying on summaries. Final reports
+present facts without links or filesystem references; internal evidence retains
+source URLs.
 
 Follow [Quick Start](#quick-start) to configure a model and start the application.
 Supply `VOX_API_KEY` through the run's `config.context.secrets` so the skill can

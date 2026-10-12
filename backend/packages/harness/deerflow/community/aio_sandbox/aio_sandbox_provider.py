@@ -265,6 +265,8 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
         # our own lease by design — so `del:` says nothing to this process's own
         # threads. See _reserve_local_teardown / _acquire_epoch.
         self._local_teardown: set[str] = set()
+        self._ephemeral_pending: dict[str, tuple[SandboxInfo, int]] = {}
+        self._ephemeral_inflight: set[str] = set()
         self._acquire_epoch: dict[str, int] = {}
         self._acquire_epoch_counter = 0
         self._acquire_inflight: dict[str, int] = {}
@@ -364,6 +366,11 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
         config = get_app_config()
         sandbox_config = config.sandbox
 
+        extras = getattr(sandbox_config, "model_extra", None)
+        destroy_on_release = (extras if isinstance(extras, dict) else vars(sandbox_config)).get("destroy_on_release", False)
+        if not isinstance(destroy_on_release, bool):
+            raise ValueError("sandbox.destroy_on_release must be a boolean")
+
         idle_timeout = getattr(sandbox_config, "idle_timeout", None)
         replicas = getattr(sandbox_config, "replicas", None)
         configured_skills_path = getattr(
@@ -396,6 +403,7 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
                 raise ValueError(f"sandbox.environment.MAX_SHELL_SESSIONS must be at least subagent_runtime.max_running + {_SHELL_SESSION_HEADROOM} ({required_shell_sessions} for the current configuration)")
 
         return {
+            "destroy_on_release": destroy_on_release,
             "image": sandbox_config.image or DEFAULT_IMAGE,
             "port": sandbox_config.port or DEFAULT_PORT,
             "container_prefix": sandbox_config.container_prefix or DEFAULT_CONTAINER_PREFIX,
@@ -491,6 +499,8 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             OwnershipBackendError: ownership could not be published.
         """
         with self._lock:
+            if sandbox_id in getattr(self, "_ephemeral_pending", {}) or (self._config.get("destroy_on_release", False) and sandbox_id in self._local_teardown):
+                raise SandboxBeingDestroyedError(sandbox_id)
             self._acquire_inflight[sandbox_id] = self._acquire_inflight.get(sandbox_id, 0) + 1
         try:
             if not self._ownership.take(sandbox_id):
@@ -638,7 +648,7 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
         return False
 
     @contextlib.contextmanager
-    def _held_teardown_lease(self, sandbox_id: str):
+    def _held_teardown_lease(self, sandbox_id: str, *, retain_on_failure: bool = False):
         """Keep *sandbox_id*'s teardown marker alive for as long as its stop runs.
 
         ``claim(..., for_destroy=True)`` writes the ``del:`` marker with the
@@ -676,6 +686,7 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
         refresh, so no claim can follow it.
         """
         stop = threading.Event()
+        completed = False
 
         def beat() -> None:
             interval = self._ownership_config.renewal_interval_seconds
@@ -703,12 +714,14 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
                 # Release last, from the heartbeat itself, so an in-flight refresh
                 # can never run after the marker is cleared. `release()` drops only
                 # our own lease, so this is a safe no-op if a peer took it above.
-                self._release_ownership(sandbox_id)
+                if completed or not retain_on_failure:
+                    self._release_ownership(sandbox_id)
 
         beater = threading.Thread(target=beat, name="sandbox-teardown-lease", daemon=True)
         beater.start()
         try:
             yield
+            completed = True
         finally:
             stop.set()
             beater.join(timeout=self._TEARDOWN_JOIN_TIMEOUT_SECONDS)
@@ -1393,6 +1406,10 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
         """
         with self._lock:
             owned_ids = list(self._sandboxes.keys()) + list(self._warm_pool.keys())
+            pending_ids = list(getattr(self, "_ephemeral_pending", {}))
+
+        for sandbox_id in pending_ids:
+            self._retry_ephemeral_destroy(sandbox_id)
 
         for sandbox_id in owned_ids:
             # Snapshot before the round trip: by the time `renew()` answers LOST,
@@ -2376,6 +2393,9 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
         Raises:
             RuntimeError: If sandbox creation or readiness check fails.
         """
+        with self._lock:
+            if sandbox_id in getattr(self, "_ephemeral_pending", {}):
+                raise SandboxBeingDestroyedError(sandbox_id)
         effective_user_id = self._effective_acquire_user_id(user_id)
         extra_mounts = self._get_extra_mounts(thread_id, user_id=effective_user_id)
         provision_lark_cli_runtime = self._lark_integration_active(effective_user_id)
@@ -2421,6 +2441,9 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
 
     async def _create_sandbox_async(self, thread_id: str | None, sandbox_id: str, *, user_id: str | None = None) -> str:
         """Async counterpart to ``_create_sandbox``."""
+        with self._lock:
+            if sandbox_id in getattr(self, "_ephemeral_pending", {}):
+                raise SandboxBeingDestroyedError(sandbox_id)
         effective_user_id = self._effective_acquire_user_id(user_id)
         extra_mounts = await run_sync_lifecycle_operation(self._get_extra_mounts, thread_id, user_id=effective_user_id)
         provision_lark_cli_runtime = await run_sync_lifecycle_operation(self._lark_integration_active, effective_user_id)
@@ -2527,6 +2550,10 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
         Args:
             sandbox_id: The ID of the sandbox to release.
         """
+        if self._config.get("destroy_on_release", False):
+            self._release_ephemeral(sandbox_id)
+            return
+
         with self._lock:
             recycle_sandbox = self._sandboxes.get(sandbox_id)
 
@@ -2589,6 +2616,66 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
                 self._forget_lost_sandbox(sandbox_id, expected_epoch=epoch)
 
         logger.info(f"Released sandbox {sandbox_id} to warm pool (container still running)")
+
+    def _release_ephemeral(self, sandbox_id: str) -> None:
+        with self._lock:
+            sandbox = self._sandboxes.get(sandbox_id)
+            epoch = self._acquire_epoch.get(sandbox_id, 0)
+        if sandbox is None:
+            return
+        if not self._reserve_local_teardown(
+            sandbox_id,
+            lambda: self._sandboxes.get(sandbox_id) is sandbox
+            and self._acquire_epoch.get(sandbox_id, 0) == epoch
+            and sandbox_id not in self._acquire_inflight,
+        ):
+            return
+        sandbox, info, _ = self._remove_tracked_sandbox(sandbox_id)
+        if info is None:
+            self._finish_local_teardown(sandbox_id)
+            return
+        with self._lock:
+            if not hasattr(self, "_ephemeral_pending"):
+                self._ephemeral_pending = {}
+                self._ephemeral_inflight = set()
+            self._ephemeral_pending[sandbox_id] = (info, 0)
+        if sandbox is not None:
+            try:
+                sandbox.close()
+            except Exception:
+                logger.warning("Failed to close released sandbox %s", sandbox_id, exc_info=True)
+        self._retry_ephemeral_destroy(sandbox_id)
+
+    def _retry_ephemeral_destroy(self, sandbox_id: str) -> None:
+        with self._lock:
+            pending = self._ephemeral_pending.get(sandbox_id)
+            if pending is None or sandbox_id in self._ephemeral_inflight:
+                return
+            self._ephemeral_inflight.add(sandbox_id)
+        info, attempts = pending
+        try:
+            if not self._claim_ownership(sandbox_id, for_destroy=True):
+                logger.warning("Ephemeral sandbox %s remains quarantined: teardown ownership unavailable", sandbox_id)
+                return
+            if attempts >= 3:
+                return
+            with self._lock:
+                self._ephemeral_pending[sandbox_id] = (info, attempts + 1)
+            try:
+                with self._held_teardown_lease(sandbox_id, retain_on_failure=True):
+                    if not isinstance(self._backend, RemoteSandboxBackend):
+                        raise RuntimeError("Ephemeral release requires a strict remote deletion acknowledgment")
+                    self._backend.destroy_strict(info)
+            except Exception:
+                logger.error("Ephemeral sandbox %s remains quarantined after deletion attempt %s/3", sandbox_id, attempts + 1, exc_info=True)
+                return
+            with self._lock:
+                self._ephemeral_pending.pop(sandbox_id, None)
+                self._local_teardown.discard(sandbox_id)
+            logger.info("Destroyed sandbox %s", sandbox_id)
+        finally:
+            with self._lock:
+                self._ephemeral_inflight.discard(sandbox_id)
 
     def destroy(self, sandbox_id: str) -> None:
         """Destroy a sandbox: stop the container and free all resources.
@@ -2691,6 +2778,11 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             self._warm_pool_identity.clear()
 
         logger.info(f"Shutting down {len(sandbox_ids)} active + {len(warm_items)} warm-pool sandbox(es)")
+
+        with self._lock:
+            pending_ids = list(getattr(self, "_ephemeral_pending", {}))
+        for sandbox_id in pending_ids:
+            self._retry_ephemeral_destroy(sandbox_id)
 
         for sandbox_id in sandbox_ids:
             try:

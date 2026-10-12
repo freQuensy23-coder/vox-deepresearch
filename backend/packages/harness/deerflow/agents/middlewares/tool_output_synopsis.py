@@ -186,6 +186,10 @@ def render_tool_output_preview(
 
     lines.append("")
     lines.append("Access:")
+    lines.append(
+        "- Scripts can automatically sort/filter/classify large volumes from the full saved file, not this synopsis, without loading all data into context. "
+        "Preserve raw data, IDs/provenance and input/kept/excluded/unresolved counts; never blindly discard classifier exclusions."
+    )
     lines.append(f"- Use read_file on {virtual_path} with start_line and end_line to inspect the raw output.")
     return "\n".join(lines)
 

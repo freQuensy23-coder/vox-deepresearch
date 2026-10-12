@@ -764,17 +764,17 @@ def test_build_middlewares_uses_resolved_model_name_for_vision(monkeypatch):
     #   ..., custom, TerminalResponseMiddleware, ModelLengthFinishReasonMiddleware,
     #   SafetyFinishReasonMiddleware, ClarificationMiddleware, so the custom mock
     #   sits at index [-5].
-    assert len(middlewares) > 0 and isinstance(middlewares[-5], MagicMock)
+    assert len(middlewares) > 0 and isinstance(middlewares[-6], MagicMock)
 
     from deerflow.agents.middlewares.clarification_middleware import ClarificationMiddleware
     from deerflow.agents.middlewares.model_length_finish_reason_middleware import ModelLengthFinishReasonMiddleware
     from deerflow.agents.middlewares.safety_finish_reason_middleware import SafetyFinishReasonMiddleware
     from deerflow.agents.middlewares.terminal_response_middleware import TerminalResponseMiddleware
 
-    assert isinstance(middlewares[-4], TerminalResponseMiddleware)
-    assert isinstance(middlewares[-3], ModelLengthFinishReasonMiddleware)
-    assert isinstance(middlewares[-2], SafetyFinishReasonMiddleware)
-    assert isinstance(middlewares[-1], ClarificationMiddleware)
+    assert isinstance(middlewares[-5], TerminalResponseMiddleware)
+    assert isinstance(middlewares[-4], ModelLengthFinishReasonMiddleware)
+    assert isinstance(middlewares[-3], SafetyFinishReasonMiddleware)
+    assert isinstance(middlewares[-2], ClarificationMiddleware)
 
 
 def test_build_middlewares_custom_agent_memory_opt_out_keeps_dynamic_date_only(monkeypatch):
@@ -876,7 +876,10 @@ def test_build_middlewares_passes_explicit_app_config_to_shared_factory(monkeypa
         "title_app_config": app_config,
         "memory_config": app_config.memory,
     }
-    assert middlewares[0] == "base-middleware"
+    from deerflow.agents.middlewares.graph_budget_middleware import GraphBudgetMiddleware
+
+    assert isinstance(middlewares[0], GraphBudgetMiddleware)
+    assert middlewares[2] == "base-middleware"
 
 
 def test_build_middlewares_passes_run_model_name_to_summarization(monkeypatch):
@@ -1117,7 +1120,7 @@ def test_build_middlewares_injects_configured_extension_middlewares(monkeypatch)
     )
 
     middleware_types = [type(m).__name__ for m in middlewares]
-    assert middleware_types[-6:] == [
+    assert middleware_types[-7:-1] == [
         "ConfiguredGuardMiddleware",
         "ConfiguredAuditMiddleware",
         "TerminalResponseMiddleware",

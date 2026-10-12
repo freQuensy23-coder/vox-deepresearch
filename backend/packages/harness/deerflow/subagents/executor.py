@@ -1728,6 +1728,7 @@ class SubagentExecutor:
                 "recursion_limit": self._recursion_limit if self._recursion_limit is not None else self.config.max_turns,
                 "callbacks": [collector],
                 "tags": [collector_caller],
+                "metadata": {"run_id": self.run_id, "task_id": result.task_id, "operation": "subagent"},
             }
 
             # Inject tracing callbacks at the graph level so a single subagent run

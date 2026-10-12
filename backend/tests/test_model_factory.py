@@ -245,7 +245,10 @@ def test_appends_all_tracing_callbacks(monkeypatch):
     FakeChatModel.captured_kwargs = {}
     model = factory_module.create_chat_model(name="alpha")
 
-    assert model.callbacks == ["smith-callback", "langfuse-callback"]
+    from deerflow.models.local_trace import LocalLLMTraceCallback
+
+    assert isinstance(model.callbacks[0], LocalLLMTraceCallback)
+    assert model.callbacks[1:] == ["smith-callback", "langfuse-callback"]
 
 
 # ---------------------------------------------------------------------------

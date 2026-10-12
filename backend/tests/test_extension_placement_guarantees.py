@@ -172,7 +172,7 @@ def test_subagent_model_physical_uses_the_innermost_core_coalescer():
 #: sees raw results. This carve-out is named explicitly rather than the
 #: assertion being loosened: any OTHER middleware appearing here is a real
 #: regression, and adding to this set must be a deliberate, argued change.
-_TOOL_RAW_CARVE_OUT = {"ClarificationMiddleware"}
+_TOOL_RAW_CARVE_OUT = {"ClarificationMiddleware", "LocalRawToolTraceMiddleware"}
 
 
 def test_tool_raw_is_adjacent_to_the_callable_boundary():
@@ -203,7 +203,7 @@ def test_tool_visible_sees_the_final_result():
     stack = _stack_with(MiddlewarePlacement(_Probe("visible"), Placement.TOOL_VISIBLE))
     index = _index_of_probe(stack, "visible")
     offenders = [type(_unwrap(m)).__name__ for m in stack[:index] if middleware_implements(_unwrap(m), "wrap_tool_call")]
-    assert offenders == [], f"these middlewares sit outer of TOOL_VISIBLE and wrap tool calls: {offenders}"
+    assert offenders == ["LocalToolTraceMiddleware"], f"unexpected transforming middleware outside TOOL_VISIBLE: {offenders}"
 
 
 def test_model_logical_is_outer_of_the_retry_loop():

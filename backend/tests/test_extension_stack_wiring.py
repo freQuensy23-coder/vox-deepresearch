@@ -84,7 +84,7 @@ def test_zero_extensions_skip_policy_projection(monkeypatch):
     build_subagent_runtime_middlewares(app_config=_app_config(), extensions=empty)
 
 
-def test_zero_extension_composition_reuses_the_built_stack():
+def test_zero_extension_composition_brackets_the_built_stack_with_tracing():
     from deerflow_extension_api import AgentBuildContext
 
     from deerflow.extensions.stack import compose_with_extensions
@@ -97,7 +97,8 @@ def test_zero_extension_composition_reuses_the_built_stack():
         ExtensionRegistry().build(),
     )
 
-    assert result is middlewares
+    assert [type(m).__name__ for m in result] == ["LocalToolTraceMiddleware", "LocalRawToolTraceMiddleware"]
+    assert middlewares == []
 
 
 def test_bound_build_snapshot_is_used_by_lead_and_subagent_fallbacks():
@@ -136,7 +137,7 @@ def test_lead_system_middlewares_capture_the_explicit_build_snapshot():
 
 def test_tool_visible_lands_at_the_outermost_position():
     stack = _lead_stack(_extensions(MiddlewarePlacement(_Probe("visible"), Placement.TOOL_VISIBLE)))
-    assert _tags(stack)[0] == "visible"
+    assert _tags(stack)[:3] == ["GraphBudgetMiddleware", "LocalToolTraceMiddleware", "visible"]
 
 
 def test_model_logical_lands_outside_the_retry_middleware():

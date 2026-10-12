@@ -1896,6 +1896,14 @@ def _execute_bash_command(
     timeout: float | None = None,
 ) -> str:
     """Route subagent bash calls through their isolated shell-session scope."""
+    from deerflow.agents.middlewares.local_tool_trace_middleware import tool_trace_environment
+
+    trace_env = tool_trace_environment()
+    if trace_env:
+        if env:
+            env = {**env, **trace_env}
+        else:
+            command = f"VOX_TOOL_TRACE_CONTEXT={shlex.quote(trace_env['VOX_TOOL_TRACE_CONTEXT'])} eval {shlex.quote(command)}"
     scope_id = sandbox_command_scope(runtime.context)
     scoped_execute = getattr(sandbox, "execute_command_in_scope", None)
     if scope_id is not None and callable(scoped_execute):

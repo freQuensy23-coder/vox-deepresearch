@@ -3,6 +3,11 @@ Dockerfile
 .dockerignore
 .git
 .gitignore
+.deployment/
+runtime/
+config.yaml
+compose.local.yaml
+DEPLOYMENT.local.md
 docker/
 
 # Python

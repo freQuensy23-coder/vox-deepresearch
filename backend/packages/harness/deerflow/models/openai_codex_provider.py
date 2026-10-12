@@ -24,6 +24,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
 
 from deerflow.models.credential_loader import CodexCliCredential, load_codex_cli_credential
+from deerflow.models.local_trace import current_provider_trace, provider_attempt, provider_call, provider_event, provider_sse_line
 
 logger = logging.getLogger(__name__)
 
@@ -259,9 +260,13 @@ class CodexChatModel(BaseChatModel):
         }
 
         last_error = None
+        trace = current_provider_trace()
         for attempt in range(1, self.retry_max_attempts + 1):
             try:
-                return self._stream_response(headers, payload)
+                with provider_attempt(trace, attempt, payload, secrets=(self._access_token,)):
+                    result = self._stream_response(headers, payload)
+                    trace.emit('attempt_end', result, attempt=attempt, secrets=(self._access_token,))
+                    return result
             except httpx.HTTPStatusError as e:
                 last_error = e
                 if e.response.status_code in (429, 500, 529):
@@ -292,15 +297,19 @@ class CodexChatModel(BaseChatModel):
         timeout = httpx.Timeout(connect=30, read=self.stream_idle_timeout, write=60, pool=30)
         with httpx.Client(timeout=timeout) as client:
             with client.stream("POST", f"{CODEX_BASE_URL}/responses", headers=headers, json=payload) as resp:
+                if resp.is_error:
+                    resp.read()
                 resp.raise_for_status()
                 last_event_at = time.monotonic()
                 for line in resp.iter_lines():
+                    provider_sse_line(line)
                     data = self._parse_sse_data_line(line)
                     if not data:
                         if time.monotonic() - last_event_at > self.stream_idle_timeout:
                             raise TimeoutError(f"no Codex stream events for {self.stream_idle_timeout:g}s")
                         continue
                     last_event_at = time.monotonic()
+                    provider_event(data)
 
                     event_type = data.get("type")
                     if event_type == "response.output_item.done":
@@ -370,7 +379,8 @@ class CodexChatModel(BaseChatModel):
         try:
             data = json.loads(raw_data)
         except json.JSONDecodeError:
-            logger.debug(f"Skipping non-JSON Codex SSE frame: {raw_data}")
+            provider_event({'unparsed_sse_data': raw_data})
+            logger.debug("Skipping non-JSON Codex SSE frame")
             return None
 
         return data if isinstance(data, dict) else None
@@ -477,8 +487,9 @@ class CodexChatModel(BaseChatModel):
     ) -> ChatResult:
         """Generate a response using Codex Responses API."""
         tools = kwargs.get("tools", None)
-        response = self._call_codex_api(messages, tools=tools)
-        return self._parse_response(response)
+        with provider_call(run_manager, messages):
+            response = self._call_codex_api(messages, tools=tools)
+            return self._parse_response(response)
 
     def bind_tools(self, tools: list, **kwargs: Any) -> Any:
         """Bind tools for function calling."""

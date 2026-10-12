@@ -789,16 +789,18 @@ def build_middlewares(
     # above, changing what "the final request" means for observers.
     from deerflow_extension_api import AgentScope
 
+    from deerflow.agents.middlewares.graph_budget_middleware import GraphBudgetMiddleware
     from deerflow.extensions.stack import compose_with_extensions
 
     if not resolved_extensions.has_middleware_contributors:
-        return compose_with_extensions(middlewares, AgentScope.LEAD, None, resolved_extensions)
+        composed = compose_with_extensions(middlewares, AgentScope.LEAD, None, resolved_extensions)
+        return [GraphBudgetMiddleware(composed), *composed]
 
     from deerflow_extension_api import AgentBuildContext
 
     from deerflow.extensions.policy import project_host_policy
 
-    return compose_with_extensions(
+    composed = compose_with_extensions(
         middlewares,
         AgentScope.LEAD,
         AgentBuildContext(
@@ -813,6 +815,7 @@ def build_middlewares(
         ),
         resolved_extensions,
     )
+    return [GraphBudgetMiddleware(composed), *composed]
 
 
 def _available_skill_names(agent_config, is_bootstrap: bool) -> set[str] | None:

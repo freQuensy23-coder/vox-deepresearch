@@ -143,13 +143,14 @@ def compose_with_extensions(
     base builder would place MODEL_PHYSICAL contributions above the ~18
     lead-specific middlewares appended afterwards.
     """
+    from deerflow.agents.middlewares.local_tool_trace_middleware import with_local_tool_tracing
     from deerflow.extensions import get_agent_build_extensions, record_runtime_diagnostic
 
     resolved = extensions if extensions is not None else get_agent_build_extensions()
 
     if not resolved.has_middleware_contributors:
         assert_ordering(middlewares, {})
-        return middlewares if isinstance(middlewares, list) else list(middlewares)
+        return with_local_tool_tracing(middlewares)
 
     if ctx is None:
         raise ValueError("AgentBuildContext is required when middleware extensions are loaded")
@@ -166,7 +167,7 @@ def compose_with_extensions(
     )
     _record_diagnostics(diagnostics)
     assert_ordering(result, provenance)
-    return result
+    return with_local_tool_tracing(result)
 
 
 def _record_diagnostics(diagnostics) -> None:
