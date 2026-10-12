@@ -62,6 +62,22 @@ def test_per_run_delegation_cap_treats_explicit_null_as_unset() -> None:
     config = SimpleNamespace(subagents=SubagentsAppConfig(max_total_per_run=7))
     assert effective_total_subagents_per_run(None, config) == 7
     assert effective_total_subagents_per_run(5, config) == 5
-    assert effective_total_subagents_per_run(99, config) == 50
+    assert effective_total_subagents_per_run(99, config) == 99
+    assert effective_total_subagents_per_run(1001, config) == 1000
     assert effective_total_subagents_per_run(0, config) == 1
     assert effective_total_subagents_per_run(None, SimpleNamespace()) == 6
+
+
+def test_production_research_limits_reach_middleware_without_clamping() -> None:
+    from deerflow.agents.middlewares.subagent_limit_middleware import SubagentLimitMiddleware
+
+    config = SimpleNamespace(
+        subagents=SubagentsAppConfig(max_total_per_run=1000),
+        subagent_runtime=SubagentRuntimeConfig(max_running=32, max_queued=1000),
+    )
+    middleware = SubagentLimitMiddleware(
+        max_concurrent=effective_subagent_concurrency(None, config),
+        max_total=effective_total_subagents_per_run(None, config),
+    )
+    assert middleware.max_concurrent == 32
+    assert middleware.max_total == 1000

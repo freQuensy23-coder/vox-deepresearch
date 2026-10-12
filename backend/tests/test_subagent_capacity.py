@@ -6,7 +6,32 @@ from collections import deque
 import pytest
 
 from deerflow.config.subagent_runtime_config import SubagentRuntimeConfig
-from deerflow.subagents.capacity import SubagentExecutionCapacity
+from deerflow.subagents.capacity import SubagentCapacityRejected, SubagentExecutionCapacity
+
+
+@pytest.mark.asyncio
+async def test_production_capacity_admits_32_and_queues_1000():
+    capacity = SubagentExecutionCapacity(SubagentRuntimeConfig(max_running=32, max_queued=1000))
+    for _ in range(32):
+        await capacity._acquire()
+    waiters = [asyncio.create_task(capacity._acquire()) for _ in range(1000)]
+    try:
+        await asyncio.sleep(0)
+        snapshot = capacity.snapshot()
+        assert (snapshot.running, snapshot.queued) == (32, 1000)
+        with pytest.raises(SubagentCapacityRejected):
+            await capacity._acquire()
+        await capacity._release()
+        await asyncio.wait_for(asyncio.shield(waiters[0]), timeout=1)
+        snapshot = capacity.snapshot()
+        assert (snapshot.running, snapshot.queued) == (32, 999)
+    finally:
+        for waiter in waiters:
+            waiter.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+        for _ in range(32):
+            await capacity._release()
+    assert (capacity.snapshot().running, capacity.snapshot().queued) == (0, 0)
 
 
 class _NoIterationDeque(deque):

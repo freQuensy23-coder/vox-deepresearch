@@ -11,7 +11,7 @@ description: Quick reference for subagent configuration keys, request context ke
 | -------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------- |
 | `subagents.timeout_seconds`                  | 1800                                        | Default timeout in seconds for built-in subagents                           |
 | `subagents.max_turns`                        | unset                                       | Global turn override for built-in subagents                                 |
-| `subagents.max_total_per_run`                | 6                                           | Delegations per run, 1 to 50                                                |
+| `subagents.max_total_per_run`                | 6                                           | Delegations per run, 1 to 1000                                                |
 | `subagents.token_budget.enabled`             | true                                        |                                                                             |
 | `subagents.token_budget.max_tokens`          | 2,000,000; 1,000,000 when summarization is on | Once set explicitly, no longer coupled to the summarization switch         |
 | `subagents.token_budget.warn_threshold`      | 0.7                                         | At this fraction, warns the model once on its next call                     |
@@ -49,7 +49,7 @@ description: Quick reference for subagent configuration keys, request context ke
 | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `subagent_enabled`         | Whether delegation is allowed; the web UI sets it in Ultra mode                                              |
 | `max_concurrent_subagents` | Per-response concurrency, 1 to 64, capped by `subagent_runtime.max_running`                                  |
-| `max_total_subagents`      | Temporary override of the per-run total, 1 to 50                                                             |
+| `max_total_subagents`      | Temporary override of the per-run total, 1 to 1000                                                             |
 | `allowed_subagents`        | Not read from the request: comes from the Custom Agent definition, `null` all, `[]` none, a list as allowlist; snapshotted into run metadata at run start |
 
 ## Tool signatures

@@ -14,7 +14,7 @@ import { Callout } from "nextra/components";
 | 限制               | 配置键 / 上下文键                                                        | 默认值                                          | 范围                                 | 触发时表现                                                                                         |
 | ------------------ | ------------------------------------------------------------------------ | ----------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------- |
 | 每次响应并发数     | 请求上下文 `max_concurrent_subagents`                                    | `subagent_runtime.max_running`（默认 3）        | 1 到 64，且不超过 `subagent_runtime.max_running` | 多余的 `task` 调用被丢弃，只记日志                                                       |
-| 每次 run 总量      | `subagents.max_total_per_run`，请求上下文 `max_total_subagents` 可临时覆盖 | 6                                               | 1 到 50                              | 多余调用被丢弃。若响应前总量已经用尽，助手消息末尾追加 `[SUBAGENT LIMIT REACHED] ...`，本 run 的 `stop_reason` 记为 `subagent_limit_capped`；某次响应只是越过上限时，仅截断并记日志 |
+| 每次 run 总量      | `subagents.max_total_per_run`，请求上下文 `max_total_subagents` 可临时覆盖 | 6                                               | 1 到 1000                              | 多余调用被丢弃。若响应前总量已经用尽，助手消息末尾追加 `[SUBAGENT LIMIT REACHED] ...`，本 run 的 `stop_reason` 记为 `subagent_limit_capped`；某次响应只是越过上限时，仅截断并记日志 |
 | 轮次               | `subagents.max_turns`（仅内置）、`subagents.agents.<name>.max_turns`     | general-purpose 150，bash 60，自定义 50         | 大于等于 1                           | 保留部分结果并标记 `turn_capped`；没有可用文本时 `failed`                                          |
 | 超时               | `subagents.timeout_seconds`（仅内置）、`subagents.agents.<name>.timeout_seconds` | 内置 1800 秒，自定义与设置页管理 900 秒 | 大于等于 1                           | 状态 `timed_out`                                                                                   |
 | 轮询次数           | 由超时推导：`(timeout_seconds + 60) / 5` 次，每 5 秒一次                 | 随超时                                          |                                      | 状态 `polling_timed_out`，运行时请求取消并安排延迟清理                                             |
@@ -80,7 +80,7 @@ subagent_runtime:              # 重启生效，普通 task 与批处理共用
 subagents:
   timeout_seconds: 1800         # 内置子 Agent 的默认超时
   # max_turns: 120              # 内置子 Agent 的全局轮次覆盖，不设则保持 150 / 60
-  max_total_per_run: 6          # 每次 run 的委派总量，1 到 50
+  max_total_per_run: 6          # 每次 run 的委派总量，1 到 1000
 
   token_budget:
     enabled: true

@@ -11,7 +11,7 @@ description: 子 Agent 相关的配置键、请求上下文键、工具签名、
 | ------------------------------------------ | ---------------------------------------- | --------------------------------------------------------------------- |
 | `subagents.timeout_seconds`                | 1800                                     | 内置子 Agent 的默认超时（秒）                                         |
 | `subagents.max_turns`                      | 未设置                                   | 内置子 Agent 的全局轮次覆盖                                           |
-| `subagents.max_total_per_run`              | 6                                        | 每次 run 的委派总量，1 到 50                                          |
+| `subagents.max_total_per_run`              | 6                                        | 每次 run 的委派总量，1 到 1000                                          |
 | `subagents.token_budget.enabled`           | true                                     |                                                                       |
 | `subagents.token_budget.max_tokens`        | 2,000,000；摘要压缩开启时 1,000,000      | 显式设置后不再与摘要开关联动                                          |
 | `subagents.token_budget.warn_threshold`    | 0.7                                      | 达到该比例时，在下一次模型调用中向模型发出一次警告                    |
@@ -49,7 +49,7 @@ description: 子 Agent 相关的配置键、请求上下文键、工具签名、
 | -------------------------- | --------------------------------------------------------------------- |
 | `subagent_enabled`         | 是否允许委派；Web 界面在 Ultra 模式下置为 true                        |
 | `max_concurrent_subagents` | 每次响应并发数，1 到 64，受 `subagent_runtime.max_running` 封顶       |
-| `max_total_subagents`      | 每次 run 总量的临时覆盖，1 到 50                                      |
+| `max_total_subagents`      | 每次 run 总量的临时覆盖，1 到 1000                                      |
 | `allowed_subagents`        | 不从请求读取，由 Custom Agent 定义决定：`null` 全部、`[]` 禁止、列表为允许名单；run 开始时快照进 run metadata |
 
 ## 工具签名

@@ -33,7 +33,7 @@ LangGraph Server 的入口必须是模块级的具体函数，harness 提供 `ma
 `SubagentRuntime` 把进程级容量与可选的持久批处理服务打包在一起：
 
 - `SubagentRuntime.from_app_config(app_config, batch_repository=...)` 按配置构造；也可以直接传 `SubagentRuntimeConfig`。
-- `max_total_per_run` 在构造时做范围检查（1 到 50）。
+- `max_total_per_run` 在构造时做范围检查（1 到 1000）。
 - `start()` 启动自有的批处理 worker；`stop()` 在生命周期锁下不设上限地排干正在运行的工作，并把调用方的取消传播出去。它把批处理服务的停止放在一个受保护的独立任务里，即使调用方反复取消也会跑完。
 - 支持 `async with`。
 

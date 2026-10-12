@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TOTAL_SUBAGENTS_PER_RUN = 6
 MIN_TOTAL_SUBAGENTS_PER_RUN = 1
-MAX_TOTAL_SUBAGENTS_PER_RUN = 50
+MAX_TOTAL_SUBAGENTS_PER_RUN = 1000
 MIN_CONCURRENT_SUBAGENT_CALLS = 1
 MAX_CONCURRENT_SUBAGENT_CALLS = 64
 
@@ -180,7 +180,7 @@ class SubagentsAppConfig(BaseModel):
         default=DEFAULT_MAX_TOTAL_SUBAGENTS_PER_RUN,
         ge=MIN_TOTAL_SUBAGENTS_PER_RUN,
         le=MAX_TOTAL_SUBAGENTS_PER_RUN,
-        description="Default total number of subagent delegations allowed in one lead-agent run. This is a deterministic backstop against repeated legal-sized task batches. Valid range: 1-50.",
+        description="Default total number of subagent delegations allowed in one lead-agent run. This is a deterministic backstop against repeated legal-sized task batches. Valid range: 1-1000.",
     )
 
     @field_validator("timeout_seconds", "max_turns", "max_total_per_run", mode="before")

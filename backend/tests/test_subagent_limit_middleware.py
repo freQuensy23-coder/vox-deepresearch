@@ -51,6 +51,19 @@ def _raw_tool_call(call_id: str, name: str = "task") -> dict:
     }
 
 
+def test_thousand_delegation_budget_enforces_both_boundaries():
+    middleware = SubagentLimitMiddleware(max_concurrent=32, max_total=1000)
+    for completed, expected in ((50, 32), (968, 32), (999, 1), (1000, 0)):
+        message = AIMessage(content="", tool_calls=[_task_call(f"new-{i}") for i in range(33)])
+        state = {
+            "messages": [message],
+            "delegations": [_delegation(f"prior-{i}", run_id="run-1") for i in range(completed)],
+        }
+        result = middleware.after_model(state, _make_runtime())
+        assert result is not None
+        assert len(result["messages"][0].tool_calls) == expected
+
+
 class TestClampSubagentLimit:
     def test_min_limit_is_one(self):
         # MIN lowered from 2 to 1 so a user asking for a single subagent gets 1.

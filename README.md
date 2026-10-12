@@ -20,6 +20,11 @@ exchange explicit file paths rather than relying on summaries. Final reports
 present facts without links or filesystem references; internal evidence retains
 source URLs.
 
+Production on `openclaw-dp` uses `subagents.max_total_per_run: 1000`,
+`subagent_runtime.max_running: 32`, and `subagent_runtime.max_queued: 1000`.
+The total cap accepts values up to 1000; runtime capacity changes require a
+Gateway restart. Queue wait timeout remains 300 seconds.
+
 Follow [Quick Start](#quick-start) to configure a model and start the application.
 Supply `VOX_API_KEY` through the run's `config.context.secrets` so the skill can
 access it inside the sandbox; a Gateway `.env` value alone is not forwarded.

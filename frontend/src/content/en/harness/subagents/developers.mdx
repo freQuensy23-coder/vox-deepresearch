@@ -33,7 +33,7 @@ The LangGraph Server entrypoint must be a concrete module-level function; the ha
 `SubagentRuntime` bundles the process-wide capacity with an optional durable batch service:
 
 - `SubagentRuntime.from_app_config(app_config, batch_repository=...)` builds it from configuration; a `SubagentRuntimeConfig` can also be passed directly.
-- `max_total_per_run` is range-checked at construction (1 to 50).
+- `max_total_per_run` is range-checked at construction (1 to 1000).
 - `start()` starts the owned batch worker; `stop()` drains running work without a bound under the lifecycle lock and propagates the caller's cancellation. It runs the batch service stop in a shielded, separately owned task, so it completes even when the caller cancels repeatedly.
 - `async with` is supported.
 
