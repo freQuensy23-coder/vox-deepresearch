@@ -19,3 +19,10 @@ input. Window overrides must be finite positive seconds, at most 600. Broker
 INFO logs contain argc/exit/elapsed only, never argument values.
 
 Regressions: `tests/test_aio_sandbox.py`, `tests/test_lark_broker.py`.
+
+Managed `bash(background=True)` uses a separate native `/v1/bash` session with
+`async_mode=True`, then `bash.output` with command identity and stream offsets.
+Submission is never replayed after a transport error. Owner release kills and
+closes outstanding sessions; total command deadlines are separate from the
+ten-second foreground wait. See `sandbox/command_sessions.py` and
+`tests/test_managed_bash.py`.

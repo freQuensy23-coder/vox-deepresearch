@@ -130,3 +130,11 @@ This is a controlled synthetic comparison. It cannot establish Vox's actual
 capacity, prove a hard upstream quota, or demonstrate an improvement on real
 Vox workloads. Historical observations without 429 responses also do not prove
 that Vox has no rate limit.
+
+## Transport deadlines
+
+Relay defaults are 2100 seconds for the upstream request, 1890 seconds of
+upstream socket inactivity, and 30 seconds to read the client request. These are
+three times the preceding defaults. The fixed relay queue allowance is 360 seconds;
+adaptive admission retains its unbounded, cancellable queue. API search timeouts
+(maximum 600 seconds), cooldowns, and Retry-After remain unchanged.

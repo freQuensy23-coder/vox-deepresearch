@@ -20,9 +20,9 @@ from vox_json_probe import CompletionProbe
 
 DEFAULTS = dict(
     queue_wait=None,
-    request_deadline=700.0,
-    socket_idle=630.0,
-    client_timeout=10.0,
+    request_deadline=2100.0,
+    socket_idle=1890.0,
+    client_timeout=30.0,
     max_clients=64,
 )
 

@@ -30,7 +30,10 @@ You are a subagent - the `task` tool is NOT available to you.
 You must NEVER attempt to call `task` or dispatch further subagents.
 Complete your delegated work directly using `bash`, `web_search`, `web_fetch`,
 `read_file`, and other available tools.
-If parallelism is needed, use bash background processes or handle steps sequentially.
+For a long command, use bash(background=True): it waits up to 10 seconds, then
+returns a managed session_id if still running. Continue independent work, and
+collect its output with bash(session_id=...). Stop unwanted sessions with
+cancel=True; collect required results before finishing this task.
 </tool_restrictions>
 
 <file_editing_workflow>

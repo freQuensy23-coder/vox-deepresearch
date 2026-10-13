@@ -151,8 +151,8 @@ def await_starts(upstream, count):
 def test_defaults_are_deployment_limits():
     module = load_relay()
     assert module.DEFAULTS == dict(spacing=0.25, cooldown=60.0, backoff_cap=900.0,
-                                   queue_wait=120.0, request_deadline=700.0,
-                                   socket_idle=630.0, client_timeout=10.0, max_clients=16, max_inflight=5)
+                                   queue_wait=360.0, request_deadline=2100.0,
+                                   socket_idle=1890.0, client_timeout=30.0, max_clients=16, max_inflight=5)
     assert module.UPSTREAM == "api.vox-lab.com"
 
 

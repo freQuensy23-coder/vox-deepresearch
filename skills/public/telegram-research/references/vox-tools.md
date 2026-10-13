@@ -7,23 +7,43 @@
 интервал начала не менее 5 секунд, после 429/502/503/504/524 или сетевого сбоя
 общая пауза от 60 секунд с ростом до 900 секунд; больший Retry-After сохраняется.
 Максимум две попытки одного read-запроса, `--attempts 1` отключает повтор.
-В управляемом sandbox `VOX_RELAY_URL` направляет запросы через доверенный шлюз:
-единый активный upstream, те же базовые интервалы и сохранённые паузы. Локальный
-CLI не создаёт вторую очередь и не повторяет ошибку шлюза автоматически.
+В управляемом sandbox `VOX_RELAY_URL` направляет запросы через доверенный шлюз,
+который управляет очередью, параллелизмом и паузами. Локальный CLI не создаёт
+вторую очередь и не повторяет ошибку шлюза автоматически.
 Не меняй эту конфигурацию и не обходи шлюз собственным HTTP-клиентом.
 
 ## Подключение и пути
 
-Detached shell processes can outlive the agent graph. Do not use shell backgrounding
-(`&`, `nohup`, `disown`, `setsid`, detached `Popen`) for Vox collection. Execute bounded
-foreground calls. Ordinary search automatically continues dates within 20 pages
-and 840 seconds; `--max-pages 1` explicitly requests a one-page batch. At a pause,
-inspect the manifest, then use `--resume --expected-cursor '<observed boundary>'` with the same search
-parameters and workspace. Copy `remaining_window.to` for descending order or
-`remaining_window.from` for ascending order, exactly as saved in the manifest.
-The AIO shell deadline
-is 900 seconds including queue wait. Do not evade it with an untracked process or
-spend model turns repeatedly polling one log. A checkpoint is not research completion.
+Запускай команды выгрузки Vox через инструмент `bash` с `background=true`.
+Инструмент ждёт до **10 секунд**: быстрая команда возвращает `status=completed`,
+вывод и код выхода; долгая — `status=running` и `session_id`, продолжая тот же
+процесс. Для долгих выгрузок задавай `timeout_seconds=3600`, чтобы обычный
+короткий лимит shell не обрывал ожидание очереди и запроса relay. Это отдельный
+срок выполнения команды, а не срок ожидания первого ответа инструмента.
+
+Пример аргументов инструмента (период и запрос выбирай по задаче):
+
+~~~json
+{"command":"python3 /mnt/skills/public/telegram-research/scripts/vox.py search-page 'подработка' --from 2026-10-01 --to 2026-10-13","background":true,"timeout_seconds":3600}
+~~~
+
+Пока получен `running`, продолжай независимую работу: вычитывай уже сохранённые
+сообщения, проверяй источники, фильтруй файлы через Jev, обновляй фактуру и реестр.
+Не повторяй выполняющийся запрос. Когда понадобится результат, вызови
+`bash` с `session_id` и пустым `command`. Если другой полезной работы не осталось,
+добавь `wait_seconds=60`, вместо частого опроса. `cancel=true` останавливает сессию.
+Сессия принадлежит создавшему её агенту; завершение или отмена его исполнения
+останавливает оставшиеся команды. Поэтому перед итоговым ответом собери нужные
+результаты и останови ненужные выгрузки. Для этого режима не добавляй `&` или
+`nohup`: жизненным циклом уже управляет инструмент.
+
+При `completed` проверь `exit_code=0`, затем прочитай файл по пути из `stdout`.
+Завершение команды не означает завершение исследования. Обычный `search`
+обходит даты в пределах 20 страниц и 840 секунд; `--max-pages 1` запрашивает одну
+порцию. При паузе прочитай manifest и продолжи через `--resume
+--expected-cursor '<observed boundary>'` с прежними параметрами и workspace.
+Для убывающего порядка скопируй `remaining_window.to`, для возрастающего —
+`remaining_window.from` точно из manifest.
 
 Исполняемый файл: [vox.py](../scripts/vox.py). В sandbox:
 

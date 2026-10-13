@@ -45,6 +45,11 @@ concurrency from observed latency and errors. It is developed and tested locally
 it has not been deployed. [Real Vox measurements](local-deploy/evals/dynamic-admission-live-2026-10-12.md)
 record the observed speed improvement and its limits separately from synthetic tests.
 
+Long Vox commands use managed `bash(background=True)`: completed commands return
+within ten seconds; longer commands return a session ID and continue while the
+agent reads existing evidence. Poll that session to collect its result before
+finishing the task. AIO and POSIX local sandboxes support this mode.
+
 The application documentation below is inherited from DeerFlow. Upstream
 attribution and the [MIT license](LICENSE) are preserved.
 

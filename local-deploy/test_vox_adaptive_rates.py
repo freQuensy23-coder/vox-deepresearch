@@ -16,8 +16,8 @@ from test_vox_relay import MODULE, await_starts, load_relay, relays, request, up
 
 
 def test_production_rate_defaults_only():
-    expected = dict(spacing=0.25, cooldown=60.0, backoff_cap=900.0, queue_wait=120.0,
-                    request_deadline=700.0, socket_idle=630.0, client_timeout=10.0,
+    expected = dict(spacing=0.25, cooldown=60.0, backoff_cap=900.0, queue_wait=360.0,
+                    request_deadline=2100.0, socket_idle=1890.0, client_timeout=30.0,
                     max_clients=16, max_inflight=5)
     assert load_relay().DEFAULTS == expected
 

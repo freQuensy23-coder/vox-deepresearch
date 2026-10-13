@@ -65,6 +65,9 @@ class Sandbox(ABC):
 
     def __init__(self, id: str):
         self._id = id
+        from deerflow.sandbox.command_sessions import CommandSessions
+
+        self._command_sessions = CommandSessions()
 
     @property
     def id(self) -> str:
@@ -126,7 +129,19 @@ class Sandbox(ABC):
 
     def release_command_scope(self, scope_id: str) -> None:
         """Release provider-specific command state for one execution scope."""
-        del scope_id
+        self._command_sessions.release(scope_id)
+
+    def start_command(self, command: str, *, owner_id: str, env: dict[str, str] | None = None, timeout: float | None = None, yield_time: float = 10) -> dict:
+        """Start an owner-bound command, yielding its handle after a bounded wait.
+
+        Providers implement native process/session ownership. The default is an
+        explicit unsupported result, never an untracked shell-detach fallback.
+        """
+        raise NotImplementedError("This sandbox does not support managed background commands")
+
+    def poll_command(self, session_id: str, *, owner_id: str, wait_seconds: float = 0, cancel: bool = False) -> dict:
+        """Read incremental output or stop a command belonging to this owner."""
+        return self._command_sessions.poll(session_id, owner=owner_id, wait=wait_seconds, cancel=cancel)
 
     @abstractmethod
     def read_file(

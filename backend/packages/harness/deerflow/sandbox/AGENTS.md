@@ -119,3 +119,15 @@ symlinks, and visible depth/size bounds.
 - `read_file` - Read file contents with optional line range; full reads keep stored line endings (Local `read_file`/`grep` read `newline="\n"`, writes `newline=""`), ranged reads join with `\n`
 - `write_file` - Write/append to files, creates directories; overwrites by default and exposes the `append` argument in the model-facing schema for end-of-file writes; subject to the read-before-write gate when `read_before_write.enabled` (see Middleware Chain)
 - `str_replace` - Substring replacement (single or all occurrences); `_match_line_endings` gives `old_str`/`new_str` a CRLF file's endings; same-path serialization is scoped to `(sandbox.id, path)` so isolated sandboxes do not contend on identical virtual paths inside one process; subject to the read-before-write gate when `read_before_write.enabled` (see Middleware Chain)
+
+## Managed bash commands
+
+`bash(background=True)` uses owner-bound native commands in AIO and POSIX LocalSandbox.
+It waits up to ten seconds for execution, then returns an opaque session ID.
+Poll with `bash(session_id=...)`, optionally `wait_seconds` (0–60); cancel with
+`cancel=True`. `timeout_seconds` bounds command lifetime independently of yielding.
+Each command has its own shell, so other tools can run while it is pending.
+Execution-lease release cancels remaining commands; IDs cannot cross owners.
+Output is incremental, bounded, and secret-redacted across polls. Do not retry an
+ambiguous submission: its process may exist. Other providers explicitly reject
+managed mode while their existing foreground path remains available.

@@ -158,6 +158,10 @@ class AioSandbox(Sandbox):
             self._closed = True
             scoped_sessions = list(self._scoped_shell_sessions.items())
             self._scoped_shell_sessions.clear()
+        try:
+            self._command_sessions.close()
+        except Exception:
+            logger.warning("Failed to close managed background commands", exc_info=True)
         for scope_id, scoped in scoped_sessions:
             with scoped.lock:
                 if scoped.session_id is not None and self._client is not None:
@@ -583,6 +587,7 @@ class AioSandbox(Sandbox):
 
     def release_command_scope(self, scope_id: str) -> None:
         """Clean up one subagent's explicit server-side shell session."""
+        super().release_command_scope(scope_id)
         with self._scope_registry_lock:
             scoped = self._scoped_shell_sessions.pop(scope_id, None)
         if scoped is None:
@@ -597,6 +602,19 @@ class AioSandbox(Sandbox):
                 request_options=self._bounded_cleanup_request_options(),
             )
             scoped.session_id = None
+
+    def start_command(self, command, *, owner_id, env=None, timeout=None, yield_time=10):
+        from deerflow.community.aio_sandbox.command_session import AioCommand
+        from deerflow.sandbox.command_sessions import wait_budget
+
+        _validate_extra_env(env)
+        wait_budget(yield_time)
+        if self._closed:
+            raise RuntimeError("sandbox client is closed")
+        timeout = self._default_command_timeout if timeout is None else timeout
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 86400:
+            raise ValueError("command timeout must be positive and at most one day")
+        return self._command_sessions.start(lambda: AioCommand(self, command, env, timeout), owner=owner_id, env=env, wait=yield_time)
 
     @staticmethod
     def _format_timeout_duration(timeout: float) -> str:

@@ -496,6 +496,20 @@ class LocalSandbox(Sandbox):
 
         raise RuntimeError("No suitable shell executable found. Tried /bin/zsh, /bin/bash, /bin/sh, and `sh` on PATH.")
 
+    def start_command(self, command, *, owner_id, env=None, timeout=None, yield_time=10):
+        from deerflow.sandbox.command_sessions import wait_budget
+        from deerflow.sandbox.local.command_session import LocalCommand
+
+        if os.name != "posix":
+            raise NotImplementedError("Managed local commands currently require POSIX; foreground bash remains available")
+        _validate_extra_env(env)
+        wait_budget(yield_time)
+        timeout = DEFAULT_COMMAND_TIMEOUT_SECONDS if timeout is None else timeout
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not 0 < timeout <= 86400:
+            raise ValueError("command timeout must be positive and at most one day")
+        args = [self._get_shell(), "-c", self._resolve_paths_in_command(command)]
+        return self._command_sessions.start(lambda: LocalCommand(args, env=build_sandbox_env(env), timeout=timeout), owner=owner_id, env=env, wait=yield_time)
+
     def execute_command(
         self,
         command: str,

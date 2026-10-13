@@ -1894,10 +1894,29 @@ def _execute_bash_command(
     runtime: Runtime,
     env: dict[str, str] | None,
     timeout: float | None = None,
+    background: bool = False,
+    session_id: str | None = None,
+    cancel: bool = False,
+    wait_seconds: float = 0,
 ) -> str:
     """Route subagent bash calls through their isolated shell-session scope."""
     from deerflow.agents.middlewares.local_tool_trace_middleware import tool_trace_environment
 
+    if background or session_id:
+        owner = sandbox_command_scope(runtime.context) or sandbox_lease_owner(runtime.context)
+        if owner is None:
+            raise ValueError("managed bash requires an agent execution owner")
+        if session_id:
+            result = sandbox.poll_command(session_id, owner_id=owner, cancel=cancel, wait_seconds=wait_seconds)
+        else:
+            trace = tool_trace_environment()
+            job_env = {**(env or {}), **(trace or {})}
+            result = sandbox.start_command(command, owner_id=owner, env=job_env, timeout=timeout, yield_time=10)
+        # Keep the handle/status first and retain bounded incremental output.
+        payload = {key: result.get(key) for key in ("session_id", "status", "exit_code")}
+        payload.update({key: (result.get(key) or "")[:4000] for key in ("stdout", "stderr")})
+        payload["output_truncated"] = result.get("output_truncated", False) or any(len(result.get(key) or "") > 4000 for key in ("stdout", "stderr"))
+        return json.dumps(payload, ensure_ascii=False)
     trace_env = tool_trace_environment()
     if trace_env:
         if env:
@@ -2386,7 +2405,7 @@ def _lark_cli_env_from_runtime(runtime: Runtime, command: str, *, sandbox_paths:
 
 
 @tool("bash", parse_docstring=True)
-def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
+def bash_tool(runtime: Runtime, command: str = "", description: str = "", background: bool = False, session_id: str | None = None, cancel: bool = False, timeout_seconds: float | None = None, wait_seconds: float = 0) -> str:
     """Execute a bash command in the configured execution environment.
 
 
@@ -2399,16 +2418,30 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
       sandbox policy permits it.
     - If local host bash rejects a path, do not repeat the rejected command. For environment questions,
       retry with command-only probes; otherwise use allowed virtual paths or explain the restriction.
-    - To start a long-lived process such as a web server, ALWAYS run it in the background with its
-      output redirected, e.g. `your-command > /mnt/user-data/workspace/server.log 2>&1 &`, then check
-      the log file or poll the port. A long-lived process run in the foreground blocks the turn until
-      it is killed at the command timeout.
+    - Use background=True for long commands. Wait up to 10 seconds: a fast command returns
+      completed output; a longer one returns status=running and a session_id. It is the same
+      process, not a retry. Continue independent work, then call bash(session_id=...) to collect
+      new output and exit status, or bash(session_id=..., cancel=True) to stop it. These commands
+      have isolated shells and are stopped when their owning agent execution is released.
+      Supported by AIO and POSIX LocalSandbox; other providers keep foreground bash.
 
     Args:
         command: The bash command to execute. Always use absolute paths for files and directories.
         description: Optional short explanation of this command shown in the UI.
+        background: Wait up to 10 seconds, then return a managed session if still running.
+        session_id: Read a previously returned session owned by this agent; leave command empty.
+        cancel: Stop the specified session and its command.
+        timeout_seconds: Optional total command deadline, distinct from the 10-second yield.
+        wait_seconds: When polling, wait up to 60 seconds if no independent work remains; default 0.
     """
     try:
+        if session_id and command or cancel and not session_id:
+            raise ValueError("poll/cancel requires session_id and an empty command")
+        if timeout_seconds is not None and (type(timeout_seconds) not in (int, float) or not 0 < timeout_seconds <= 86400):
+            raise ValueError("command timeout must be positive and at most one day")
+        if background and not session_id and not command.strip():
+            raise ValueError("a command is required")
+        managed = {"background": background, "session_id": session_id, "cancel": cancel, "wait_seconds": wait_seconds} if background or session_id else {}
         sandbox = ensure_sandbox_initialized(runtime)
         # Request-scoped secrets resolved for the active skill (#3861), plus a
         # short-lived GitHub App installation token threaded through by the
@@ -2460,7 +2493,8 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
                 command,
                 runtime=runtime,
                 env=local_env,
-                timeout=command_timeout,
+                timeout=timeout_seconds if timeout_seconds is not None else command_timeout,
+                **managed,
             )
             return _truncate_bash_output(
                 mask_secret_values(mask_local_paths_in_output(output, thread_data), injected_env),
@@ -2483,6 +2517,8 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
                     command,
                     runtime=runtime,
                     env=injected_env,
+                    **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
+                    **managed,
                 ),
                 injected_env,
             ),
@@ -2496,8 +2532,10 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
         return f"Error: Unexpected error executing command: {_sanitize_error(e, runtime)}"
 
 
-async def _bash_tool_async(runtime: Runtime, command: str, description: str = "") -> str:
-    return await _run_sync_tool_after_async_sandbox_init(bash_tool.func, runtime, command, description)
+async def _bash_tool_async(runtime: Runtime, command: str = "", description: str = "", background: bool = False, session_id: str | None = None, cancel: bool = False, timeout_seconds: float | None = None, wait_seconds: float = 0) -> str:
+    if not background and session_id is None and not cancel and timeout_seconds is None:
+        return await _run_sync_tool_after_async_sandbox_init(bash_tool.func, runtime, command, description)
+    return await _run_sync_tool_after_async_sandbox_init(bash_tool.func, runtime, command, description, background, session_id, cancel, timeout_seconds, wait_seconds)
 
 
 bash_tool.coroutine = _bash_tool_async
