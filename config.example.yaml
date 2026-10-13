@@ -1880,10 +1880,36 @@ sandbox:
 # shared by ordinary `task` calls and durable batches. Waiting work is async;
 # queued subagents do not occupy a scheduler thread.
 subagent_runtime:
-  max_running: 3
-  max_queued: 64
+  max_running: 32
+  max_queued: 1000
   admission_policy: queue       # queue or reject when all slots are occupied
-  queue_timeout_seconds: 300     # 0 = wait indefinitely; cancellation still works
+  queue_timeout_seconds: 0       # no queue deadline; cancellation still works
+
+# Vox research profile; agents retain control of relevance and research decisions.
+lead_prompt_overlay:
+  append: >-
+    For telegram-research, follow the active skill. The lead searches broadly and
+    assigns EVERY discovered relevant group to depth research, one group per agent
+    except documented linked clusters. Use scripts, automation and Jev as useful;
+    batch_task(items_file=...) can submit all unassigned relevant groups with
+    max_running_items=32 and max_live_items=1000. Do not limit coverage to a sample
+    or stop at a report while relevant groups or discoveries remain unresolved.
+    The goal is the complete map requested by the user. Individual network errors
+    do not authorize a blanket ban on further requests for depth agents.
+subagents:
+  timeout_seconds: 0
+  max_total_per_run: 1000
+  agents:
+    general-purpose:
+      prompt_overlay:
+        append: >-
+          For telegram-research, investigate your assigned group using the active
+          skill and original user question. You may export the group and use
+          scripts, automation and Jev to obtain and analyze the needed evidence.
+          Save sourced facts, new keywords, external links and public business
+          contacts, and add every discovered relevant group to the shared registry.
+          Existing samples do not restrict further collection. Keep unfinished
+          research partial rather than claiming it is complete.
 
 # subagents:
 #   # Default timeout (seconds) for built-in subagents (default: 1800 = 30 min).
@@ -1959,23 +1985,23 @@ subagent_runtime:
 #   # Set `model` to use a different model (e.g., a local Ollama model for cost savings).
 #   # The model name must match a name defined in the `models:` section above.
 
-# Durable native-subagent batches. Disabled by default because enabling it can
-# materially increase model usage and requires database.backend sqlite/postgres.
+# Durable native-subagent batches for the Vox research workflow.
+# Requires database.backend sqlite/postgres (SQLite is configured below).
 # The three limits are intentionally separate:
 # - total: all persisted items in one batch
 # - live: pending work admitted as queued/running at one time
 # - running: items from one batch allowed to hold real execution slots
 subagent_batches:
-  enabled: false
+  enabled: true
   poll_interval_seconds: 1
   lease_seconds: 120
-  max_items_per_batch: 5000
+  max_items_per_batch: 1000
   # Cumulative submitted items across all batches in one lead run (terminal items count).
   max_items_per_run: 1000
-  default_max_live_items: 100
+  default_max_live_items: 1000
   max_live_items_per_batch: 1000
-  default_max_running_items: 3
-  max_running_items_per_batch: 64
+  default_max_running_items: 32
+  max_running_items_per_batch: 32
   max_attempts: 3
   max_result_chars: 100000
   result_preview_max_chars: 2000

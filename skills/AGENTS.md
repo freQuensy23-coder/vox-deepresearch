@@ -4,11 +4,11 @@
   guide, with a stdlib-only Vox CLI for individual read operations. Keep search
   strategy and link/participant expansion in the Markdown instructions, not an
   automated research loop. Follow observed leads; missing links or usable
-  authors must not block completion. The agent should finish reading selected
-  useful, accessible candidates before answering; a group card alone does not
+  authors must not block completion. The lead must assign every discovered relevant group to depth research and
+  account for all search candidates before declaring the requested map complete; a group card alone does not
   establish content relevance. Repeat keyword, community-reference, and topical
-  key-participant expansion over the growing set of chats until the user's
-  question can be answered with evidence. Distinguish influential, substantive
+  key-participant expansion over the growing set of chats until the complete map requested by the user is established, without
+  silently discarding relevant groups or unresolved work. Distinguish influential, substantive
   participants from weak advertising leads. Declare `VOX_API_KEY` as a skill secret; Gateway env
   alone is scrubbed by sandbox policy. Text search uses date boundaries rather
   than its disabled offset/phrase/language filters. Preserve author IDs, source
@@ -39,3 +39,10 @@ one-page sourced facts. Batch manifests dispatch independent group tasks;
 helpers must not choose keywords, relevance or research stopping conditions.
 Depth agents may use Jev for triage and inspect other public chats of topical
 participants to propose new groups; the next depth assignment stays with the lead.
+
+The lead may automate breadth search, triage and batch submission with scripts
+and Jev. Depth agents may export their assigned group and analyze it with these
+tools. Batch examples must dispatch all unassigned thematic groups in the
+registry, with 32 running slots, 1000 total assignments and queue capacity 1000.
+Do not replace incomplete group research with a selected sample or prohibit
+further network collection because earlier requests failed.

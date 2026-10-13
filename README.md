@@ -19,7 +19,10 @@ The lead can generate a JSON task manifest on disk and submit it through
 `batch_task(items_file=...)`, then continue breadth research while depth agents
 run in parallel. Registry writes use a lock and atomic replacement; group
 claims prevent duplicate assignments. The skill applies to different topics;
-research choices and the stopping decision remain with the agents.
+the lead assigns every discovered relevant group and continues until the
+requested map is complete. Scripts and Jev may accelerate search, export,
+analysis and dispatch; relevance and research decisions remain with the lead.
+Unresolved thematic groups stay pending rather than disappearing from coverage.
 
 Production on `openclaw-dp` uses `subagents.max_total_per_run: 1000`,
 `subagent_runtime.max_running: 32`, and `subagent_runtime.max_queued: 1000`.
