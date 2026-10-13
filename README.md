@@ -30,6 +30,9 @@ The total cap accepts values up to 1000; runtime capacity changes require a
 Gateway restart. On this deployment, execution and queue wait deadlines are
 disabled (`timeout_seconds: 0`, `queue_timeout_seconds: 0`); cancellation remains available.
 
+Parallel agents can read shared skill files without occupying worker threads
+while waiting for the file gate; read-before-write protection remains active.
+
 The research sandbox is shared by the lead and its depth agents. Its production
 resource budget and API readiness check are documented in
 [the provisioner guide](local-deploy/README.md#shared-sandbox-resources).

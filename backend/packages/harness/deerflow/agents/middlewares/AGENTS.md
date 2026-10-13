@@ -137,3 +137,9 @@ Resolve the whole batch through user storage, enabled state and agent allowlist
 before activation; reject any invalid entry. Keep bodies in escaped HumanMessage
 context with task text once. Authenticated paths feed secrets/tool policy; record usage per skill.
 Legacy slash syntax is unchanged.
+
+Read-before-write gate locks are shared across event loops. Async waiters use
+nonblocking acquisition plus an async wait; never send blocking lock acquisition
+to the default executor, because same-file waiters can exhaust the pool needed
+by the lock holder for file work. Keep sync/async mutual exclusion, read-version
+marks, and draining of already-dispatched file probes before release.

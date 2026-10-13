@@ -29,35 +29,13 @@ def _request(tool_name: str) -> ToolCallRequest:
     )
 
 
-class _BlockingAcquireLock:
-    def __init__(self) -> None:
-        self.acquire_started = threading.Event()
-        self.allow_acquire = threading.Event()
-        self.acquired = threading.Event()
-        self.release_calls = 0
-        self._guard = threading.Lock()
-
-    def acquire(self) -> bool:
-        self.acquire_started.set()
-        assert self.allow_acquire.wait(timeout=5), "test did not unblock gate-lock acquisition"
-        with self._guard:
-            self.acquired.set()
-        return True
-
-    def release(self) -> None:
-        with self._guard:
-            assert self.acquired.is_set(), "gate lock released without ownership"
-            self.acquired.clear()
-            self.release_calls += 1
-
-
 class _TrackingLock:
     def __init__(self) -> None:
         self.acquired = False
         self.release_calls = 0
         self._guard = threading.Lock()
 
-    def acquire(self) -> bool:
+    def acquire(self, blocking: bool = True) -> bool:
         with self._guard:
             assert not self.acquired
             self.acquired = True
@@ -71,12 +49,13 @@ class _TrackingLock:
 
 
 @pytest.mark.parametrize("tool_name", ["read_file", "write_file"])
-def test_async_gate_cancellation_drains_queued_lock_acquisition(
+def test_async_gate_cancellation_does_not_orphan_waiting_lock(
     monkeypatch: pytest.MonkeyPatch,
     tool_name: str,
 ) -> None:
     async def scenario() -> None:
-        gate_lock = _BlockingAcquireLock()
+        gate_lock = threading.Lock()
+        gate_lock.acquire()
         middleware = ReadBeforeWriteMiddleware(content_reader=lambda _runtime, _path: "v1")
         monkeypatch.setattr(middleware, "_lock_for", lambda _request, _path: gate_lock)
         handler_called = False
@@ -84,47 +63,23 @@ def test_async_gate_cancellation_drains_queued_lock_acquisition(
         async def handler(_request: ToolCallRequest) -> ToolMessage:
             nonlocal handler_called
             handler_called = True
-            return ToolMessage(content="OK", tool_call_id=f"call-{tool_name}", name=tool_name)
+            return ToolMessage(content="v1", tool_call_id=f"call-{tool_name}", name=tool_name)
 
         task = asyncio.create_task(middleware.awrap_tool_call(_request(tool_name), handler))
         try:
-            assert await asyncio.to_thread(gate_lock.acquire_started.wait, 2), "gate-lock acquisition did not start"
-
+            await asyncio.sleep(0.02)
+            assert not task.done()
             task.cancel("first cancellation")
-            await asyncio.sleep(0)
-
-            # threading.Lock.acquire() is already running in a worker thread and
-            # cannot be cancelled. The middleware must retain ownership of that
-            # acquisition until it lands, then release it before propagating the
-            # original cancellation. Returning cancellation here would orphan a
-            # future successful acquire with nobody left to release it.
-            assert not task.done()
-            assert gate_lock.release_calls == 0
-
-            task.cancel("second cancellation")
-            await asyncio.sleep(0)
-
-            assert not task.done()
-            assert gate_lock.release_calls == 0
-            assert not handler_called
-
-            gate_lock.allow_acquire.set()
             with pytest.raises(asyncio.CancelledError) as exc_info:
-                await task
-
+                await asyncio.wait_for(task, 1)
             assert exc_info.value.args == ("first cancellation",)
-            assert gate_lock.release_calls == 1
-            assert not gate_lock.acquired.is_set()
+            assert gate_lock.locked()  # cancellation must not unlock another owner
             assert not handler_called
         finally:
-            gate_lock.allow_acquire.set()
-            await asyncio.to_thread(gate_lock.acquired.wait, 0.1)
-            if gate_lock.acquired.is_set() and gate_lock.release_calls == 0:
-                gate_lock.release()
-            if not task.done():
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+            gate_lock.release()
+        # The cancelled waiter must never acquire the lock later.
+        await middleware.awrap_tool_call(_request(tool_name), handler)
+        assert not gate_lock.locked()
 
     asyncio.run(scenario())
 

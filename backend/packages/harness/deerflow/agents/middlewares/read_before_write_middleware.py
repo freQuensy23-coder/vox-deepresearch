@@ -140,14 +140,14 @@ async def _await_off_thread(task: asyncio.Task[Any]) -> Any:
 
 
 async def _acquire_gate_lock(lock: threading.Lock) -> None:
-    """Acquire off-loop safely; threading.Lock permits cross-thread release."""
-    acquire_task = asyncio.create_task(asyncio.to_thread(lock.acquire))
-    try:
-        await _await_off_thread(acquire_task)
-    except asyncio.CancelledError:
-        if acquire_task.done() and not acquire_task.cancelled() and acquire_task.exception() is None:
-            lock.release()
-        raise
+    """Wait across loops without consuming the pool needed by the lock holder.
+
+    Each attempt is nonblocking. There is no await between successful acquisition
+    and return, so cancellation while waiting cannot orphan a later acquisition.
+    The caller retains its existing try/finally and drains in-flight file work.
+    """
+    while not lock.acquire(blocking=False):
+        await asyncio.sleep(0.01)
 
 
 class ReadBeforeWriteMiddleware(AgentMiddleware):
