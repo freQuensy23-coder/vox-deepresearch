@@ -483,6 +483,14 @@ class SandboxAuditMiddleware(AgentMiddleware[ThreadState]):
         command = raw_command if isinstance(raw_command, str) else ""
         thread_id = self._get_thread_id(request)
 
+        # Native session control executes no shell text. Ownership is checked by
+        # the command registry; any nonempty command still gets the full audit.
+        session_id = args.get("session_id")
+        if raw_command in (None, "") and isinstance(session_id, str) and re.fullmatch(r"[0-9a-f]{32}", session_id):
+            operation = "cancel" if args.get("cancel") is True else "poll"
+            self._write_audit(thread_id, f"managed-session:{operation}:{session_id}", "pass")
+            return "", thread_id, "pass", None
+
         # ① input sanitisation — reject malformed input before regex analysis
         reject_reason = self._validate_input(command)
         if reject_reason:

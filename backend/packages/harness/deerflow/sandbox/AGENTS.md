@@ -131,3 +131,7 @@ Execution-lease release cancels remaining commands; IDs cannot cross owners.
 Output is incremental, bounded, and secret-redacted across polls. Do not retry an
 ambiguous submission: its process may exist. Other providers explicitly reject
 managed mode while their existing foreground path remains available.
+
+SandboxAudit admits an empty-command poll/cancel only with a syntactically valid
+managed session ID. Nonempty shell commands retain normal classification; the
+session registry still enforces execution ownership.

@@ -1102,3 +1102,29 @@ class TestBenchmarkSummary:
         assert high_recall == 1.0, f"High-risk block rate must be 100%, got {high_recall:.0%}"
         assert medium_recall >= 0.9, f"Medium-risk warn rate must be >=90%, got {medium_recall:.0%}"
         assert false_positive_rate == 0.0, f"False positive rate must be 0%, got {false_positive_rate:.0%}"
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_native_session_control_reaches_owned_session_handler(cancel):
+    request = _make_request("")
+    request.tool_call["args"].update(session_id="a" * 32, cancel=cancel)
+    handler = _make_handler()
+    SandboxAuditMiddleware().wrap_tool_call(request, handler)
+    handler.assert_called_once_with(request)
+
+
+def test_session_id_does_not_bypass_command_audit():
+    request = _make_request("rm -rf /")
+    request.tool_call["args"]["session_id"] = "a" * 32
+    handler = _make_handler()
+    SandboxAuditMiddleware().wrap_tool_call(request, handler)
+    handler.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_native_poll_passes_async_audit():
+    request = _make_request("")
+    request.tool_call["args"]["session_id"] = "b" * 32
+    handler = unittest.mock.AsyncMock(return_value=ToolMessage(content="running", tool_call_id="call-123"))
+    await SandboxAuditMiddleware().awrap_tool_call(request, handler)
+    handler.assert_awaited_once_with(request)
