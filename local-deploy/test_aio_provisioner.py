@@ -80,7 +80,7 @@ class ProvisionerTests(unittest.TestCase):
         self.assertEqual(result, {"sandbox_id": "sandbox-A", "sandbox_url": "http://127.0.0.1:49123", "status": "Running", "max_shell_sessions": 10})
         argv, kwargs = next(c for c in self.docker.calls if c[0][3] == "run")
         self.assertEqual(argv[:3], [p.DOCKER, "--host", "unix:///run/user/1001/docker.sock"])
-        for flag, value in [("--memory", "1g"), ("--cpus", "1"), ("--pids-limit", "256"), ("--security-opt", "no-new-privileges"), ("--cap-drop", "ALL"), ("--network", "vox-research-execution"), ("--publish", "127.0.0.1::8080")]:
+        for flag, value in [("--memory", "4g"), ("--memory-swap", "4g"), ("--cpus", "2"), ("--pids-limit", "512"), ("--security-opt", "no-new-privileges"), ("--cap-drop", "ALL"), ("--network", "vox-research-execution"), ("--publish", "127.0.0.1::8080")]:
             self.assertEqual(argv[argv.index(flag) + 1], value)
         self.assertIn("enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:1.11.0", argv)
         mounts = [argv[i + 1] for i, x in enumerate(argv) if x == "--mount"]
@@ -88,6 +88,12 @@ class ProvisionerTests(unittest.TestCase):
         envs = [argv[i + 1] for i, x in enumerate(argv) if x == "--env"]
         self.assertIn("HOME=/root", envs)
         self.assertIn("MAX_SHELL_SESSIONS=10", envs)
+        self.assertIn("MAX_BASH_SESSIONS=64", envs)
+        self.assertIn("JUPYTER_POOL_SIZE=0", envs)
+        health = argv[argv.index("--health-cmd") + 1]
+        self.assertIn("http://127.0.0.1:8080/v1/sandbox", health)
+        self.assertNotIn("BROWSER", health)
+        self.assertEqual(argv[argv.index("--health-start-period") + 1], "30s")
         self.assertTrue((self.root / "runtime/users/user-A/threads/thread-A/user-data").is_dir())
         for _, options in self.docker.calls:
             self.assertGreater(options["timeout"], 0)

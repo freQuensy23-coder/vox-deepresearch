@@ -17,6 +17,9 @@ MANAGED = "io.vox.research.provisioner"
 LABEL = "io.vox.research."
 IDENTIFIER = re.compile(r"[a-zA-Z0-9_-]{1,64}\Z")
 MAX_BODY = 8192
+# One shared sandbox hosts the lead and up to 32 concurrent depth agents.
+# The original 1 GiB limit OOM-killed python-server during live research.
+SANDBOX_HEALTH_CMD = "python -c \"import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8080/v1/sandbox', timeout=3))['success']\""
 
 
 class APIError(Exception):
@@ -212,7 +215,10 @@ class Provisioner:
             args = [
                 "run", "--detach", "--pull", "never", "--name", PREFIX + sandbox_id,
                 "--network", "vox-research-execution",
-                "--memory", "1g", "--memory-swap", "1g", "--cpus", "1", "--pids-limit", "256",
+                "--memory", "4g", "--memory-swap", "4g", "--cpus", "2", "--pids-limit", "512",
+                "--health-cmd", SANDBOX_HEALTH_CMD,
+                "--health-interval", "10s", "--health-timeout", "5s",
+                "--health-start-period", "30s", "--health-retries", "3",
                 "--security-opt", "no-new-privileges", "--cap-drop", "ALL",
                 "--label", f"{MANAGED}=1",
             ]
@@ -227,6 +233,7 @@ class Provisioner:
                 "--mount", f"type=bind,src={admission},dst=/var/lib/vox-admission",
                 "--env", "VOX_ADMISSION_DIR=/var/lib/vox-admission",
                 "--env", "HOME=/root", "--env", "USER=root", "--env", f"MAX_SHELL_SESSIONS={payload.get('max_shell_sessions', 10)}",
+                "--env", "MAX_BASH_SESSIONS=64", "--env", "JUPYTER_POOL_SIZE=0",
                 "--env", "OTEL_SDK_DISABLED=true", "--env", "NO_PROXY=localhost,127.0.0.1",
                 "--cap-add", "SETUID", "--cap-add", "SETGID",
                 "--entrypoint", "/usr/local/bin/python-server",

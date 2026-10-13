@@ -27,6 +27,10 @@ The total cap accepts values up to 1000; runtime capacity changes require a
 Gateway restart. On this deployment, execution and queue wait deadlines are
 disabled (`timeout_seconds: 0`, `queue_timeout_seconds: 0`); cancellation remains available.
 
+The research sandbox is shared by the lead and its depth agents. Its production
+resource budget and API readiness check are documented in
+[the provisioner guide](local-deploy/README.md#shared-sandbox-resources).
+
 Follow [Quick Start](#quick-start) to configure a model and start the application.
 Supply `VOX_API_KEY` through the run's `config.context.secrets` so the skill can
 access it inside the sandbox; a Gateway `.env` value alone is not forwarded.
