@@ -20,6 +20,11 @@ INFO logs contain argc/exit/elapsed only, never argument values.
 
 Regressions: `tests/test_aio_sandbox.py`, `tests/test_lark_broker.py`.
 
+Internal `_DEERFLOW_SIZE_PROBE` commands request a 32 MiB bash output envelope
+so the bounded JSON reader can carry a complete base64 frame for a 16 MiB batch
+manifest. Ordinary command output limits stay unchanged; the reader retains its
+file-boundary, byte-cap, framing and exit-status validation.
+
 Managed `bash(background=True)` uses a separate native `/v1/bash` session with
 `async_mode=True`, then `bash.output` with command identity and stream offsets.
 Submission is never replayed after a transport error. Owner release kills and

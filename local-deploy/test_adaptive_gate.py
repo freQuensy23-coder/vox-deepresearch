@@ -1018,6 +1018,29 @@ def test_cold_backlog_uses_operator_initial_budget_without_serial_probe(setup):
         gate.finish(lease, "cancelled")
 
 
+@pytest.mark.parametrize("capacity", [1, 2])
+def test_bootstrap_at_reduced_shared_capacity_can_resume_growth(setup, capacity):
+    gate, clock = setup
+    # A prior incident reduced the shared budget before this class started.
+    with gate._transaction() as state:
+        state["lanes"]["search"].update(capacity=capacity, budget_base=capacity)
+    leases = [gate.acquire(0) for _ in range(capacity)]
+    fd = pending(gate)
+    try:
+        complete(gate, clock, leases, 100)
+        state = gate.snapshot()
+        assert state["baselines"]["search_text"]["control"]["bootstrap"] is False
+    finally:
+        os.close(fd)
+    leases = [gate.acquire(0) for _ in range(capacity)]
+    fd = pending(gate)
+    try:
+        complete(gate, clock, leases, 100)
+        assert gate.snapshot()["lanes"]["search"]["capacity"] > capacity
+    finally:
+        os.close(fd)
+
+
 def test_bootstrap_does_not_censor_slow_initial_members_after_first_fast_reply(setup):
     gate, clock = setup
     initial = [gate.acquire(0) for _ in range(5)]

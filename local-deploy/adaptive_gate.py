@@ -1010,11 +1010,16 @@ class AdaptiveGate:
             return False
         if control["bootstrap"]:
             control["bootstrap_completed"] += 1
-            # Continue serving at the operator's initial budget while the first
-            # assigned cohort completes. Early fast completions alone cannot
-            # censor the still-running slow members out of the cost model.
+            # Calibrate the cohort that fits the current budget, not five
+            # serial requests when an earlier incident left only one slot.
+            # Still wait for every assigned member, including slow responses.
             if (
-                control["bootstrap_assigned"] >= self.initial[lane]
+                control["bootstrap_assigned"]
+                >= min(
+                    self.initial[lane],
+                    control["limit"],
+                    state["lanes"][lane]["capacity"],
+                )
                 and not control["bootstrap_pending"]
             ):
                 control["bootstrap"] = False

@@ -12,8 +12,11 @@ from one shared JSON registry. Each depth subagent investigates one Telegram
 group (with a documented exception for a closely linked group cluster), saves
 at most one page of sourced facts, and contributes new keywords, relevant
 groups, external links, and public business contacts. Substantive participants'
-other public chats help discover new communities. Jev can help filter saved
-messages before the agent verifies the originals.
+other public chats help discover new communities. Assess relevance by reading
+message meaning and context, directly or with optional Jev assistance; keyword
+or regex matches must not decide which candidates are discarded. The initial
+search aims for roughly 30 relevant groups, without capping coverage or adding
+irrelevant groups to reach that number.
 
 The lead can generate a JSON task manifest on disk and submit it through
 `batch_task(items_file=...)`, then continue breadth research while depth agents
@@ -54,11 +57,20 @@ An opt-in [dynamic Vox relay](local-deploy/VOX_DYNAMIC_ADMISSION.md) adjusts
 concurrency from observed latency and errors. It was enabled on `openclaw-dp`
 on 13 October 2026 with managed background commands and the increased relay deadlines. [Real Vox measurements](local-deploy/evals/dynamic-admission-live-2026-10-12.md)
 record the observed speed improvement and its limits separately from synthetic tests.
+After a capacity reduction, calibration uses the available concurrency rather
+than waiting for the original five-request cohort to complete serially.
 
 Long Vox commands use managed `bash(background=True)`: completed commands return
 within ten seconds; longer commands return a session ID and continue while the
 agent reads existing evidence. Poll that session to collect its result before
 finishing the task. AIO and POSIX local sandboxes support this mode.
+Polling a command or subagent batch whose latest tool result confirms it is
+still running does not trigger repetition limits. Repetition warnings ask the
+agent to check progress and adapt its approach, without demanding a final answer.
+Research that requires a completed report continues while its batches run,
+collects their results and synthesizes them. `batch_status` can wait up to
+60 seconds for progress. Large batch manifests retain their complete contents
+through the sandbox transport.
 
 The application documentation below is inherited from DeerFlow. Upstream
 attribution and the [MIT license](LICENSE) are preserved.

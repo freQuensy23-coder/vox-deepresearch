@@ -2222,6 +2222,30 @@ def _ends_on_human_input_request(messages: list[Any]) -> bool:
     return False
 
 
+async def _continue_managed_batch_work(evaluation: GoalEvaluation, messages: list, *, thread_id: str, user_id: str | None) -> GoalEvaluation:
+    """An owned live batch is actionable work, not an outside dependency."""
+    if evaluation["satisfied"] or evaluation["blocker"] != "external_wait" or not user_id:
+        return evaluation
+    from langchain_core.messages import ToolMessage
+
+    from deerflow.subagents.batch_runtime import get_subagent_batch_submitter
+
+    submitter = get_subagent_batch_submitter()
+    if submitter is None:
+        return evaluation
+    batch_ids = {m.additional_kwargs["subagent_batch_id"] for m in messages if isinstance(m, ToolMessage) and m.name == "batch_task" and isinstance(m.additional_kwargs.get("subagent_batch_id"), str)}
+    for batch_id in batch_ids:
+        batch = await submitter.get_batch(batch_id=batch_id, user_id=user_id)
+        if batch and batch.get("thread_id") == thread_id and batch.get("status") in {"pending", "queued", "running"}:
+            return GoalEvaluation(
+                satisfied=False,
+                blocker="goal_not_met_yet",
+                reason="Owned subagent work is still running. Continue independent work, monitor the batch, collect its results and finish the requested synthesis.",
+                evidence_summary=evaluation.get("evidence_summary", ""),
+            )
+    return evaluation
+
+
 def _stand_down_reason(goal: GoalState, evaluation: GoalEvaluation, no_progress_count: int) -> str | None:
     if evaluation["satisfied"]:
         return None
@@ -2437,6 +2461,7 @@ async def _prepare_goal_continuation_input(
             interaction_policy=interaction_policy,
             usage_callback=usage_callback,
         )
+        evaluation = await _continue_managed_batch_work(evaluation, messages, thread_id=thread_id, user_id=user_id)
     except Exception as exc:
         logger.warning("Goal evaluator failed for thread %s after run %s", thread_id, run_id, exc_info=True)
         if abort_event is not None and abort_event.is_set():

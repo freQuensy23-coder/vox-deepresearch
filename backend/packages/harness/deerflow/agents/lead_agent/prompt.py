@@ -480,16 +480,21 @@ count and never emulate it by repeatedly calling `task`.
 - Set total, live-window, and running concurrency separately. A high total never
   implies that all items become live or run at once.
 - Use `batch_status` for compact progress and `cancel_batch` for cancellation.
-- Do not wait for or paste all item results into this run. The Web UI and results
-  export API own bulk inspection. When the owner explicitly asks to inspect or
-  synthesize stored results, use `read_batch_result` for selected items in this
-  thread. Follow its bounded continuation/revision contract; never poll for
-  completion or equate execution success with acceptance.
+- When the user asks only to submit jobs, report the accepted batch. When the
+  task requires completed research or synthesis, keep working: continue
+  independent work, monitor with `batch_status`, collect the required results
+  with `read_batch_result` or the agents' saved files, and finish the requested
+  synthesis. Batch acceptance is not task completion. Follow bounded result
+  pagination and verify acceptance; do not paste all raw outputs into context.
 """
     return f"""<subagent_system>
 ## Subagent Routing: Delegate Only for Clear Net Benefit
 
 Subagents are optional. **Default to direct execution.** Do not delegate merely because a task is complex, has many steps, produces verbose output, or touches a large repository.
+
+When the user or active skill explicitly requires delegation per item, follow
+that assignment scope. The general preference for fewer agents must not reduce
+the requested coverage or replace required assignments with a sample.
 
 **DELEGATION CHECK (required before every `task` call):**
 

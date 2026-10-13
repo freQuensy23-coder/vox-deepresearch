@@ -124,6 +124,25 @@ def test_bash_exec_appends_exit_marker_when_failure_has_output(sandbox):
     assert sandbox.execute_command("make test", env={"A": "1"}) == "5 passed, 1 error\n\nExit Code: 1"
 
 
+def test_bounded_json_probe_preserves_large_batch_manifest(sandbox, monkeypatch):
+    import base64
+    import json
+
+    from deerflow.sandbox import tools
+    from deerflow.subagents.acceptance_checks import _read_bounded_json_content
+
+    payload = json.dumps([{"key": str(i), "prompt": "Исследуй сообщество " * 50} for i in range(1000)], ensure_ascii=False).encode()
+    framed = "JSON\n" + base64.b64encode(payload + b"\n000").decode() + "\nEND\n"
+
+    def exec_with_output_cap(**kwargs):
+        return SimpleNamespace(data=SimpleNamespace(stdout=framed[: kwargs.get("max_output_length", 20000)], stderr="", exit_code=0, status="completed"))
+
+    sandbox._client.bash.exec = exec_with_output_cap
+    monkeypatch.setattr(tools, "is_local_sandbox", lambda _: False)
+    monkeypatch.setattr(tools, "ensure_sandbox_initialized", lambda _: sandbox)
+    assert _read_bounded_json_content(SimpleNamespace(), "/mnt/user-data/workspace/items.json", None, max_bytes=16 * 1024 * 1024) == payload
+
+
 def _execute_with_open_session_stdin(command, env=None, *, shell="/bin/sh", terminal=False, **_kwargs):
     terminal_fds = None
     if terminal:

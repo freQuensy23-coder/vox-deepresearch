@@ -7,6 +7,11 @@ checks precede reading; file reads and parsing run off-loop with lifecycle drain
 No host-path or shell-HTTP dispatch fallback. Both forms use the same native service,
 ownership, idempotency and admission limits.
 
+`batch_status(wait_seconds=0..60)` can wait for status/count changes. Default 0
+preserves immediate snapshots; async waiting remains cancellable and rechecks
+owner access on every snapshot. Research tasks collect batch results before
+finishing, rather than treating submission as completion.
+
 `task` and `batch_task` opt into JSON checks with `file:<path> json-valid`.
 See [subagents/AGENTS.md](../subagents/AGENTS.md) for read limits and UNVERIFIED semantics.
 Batch readers bound by assembly use its AppConfig output budget. Fit the complete escaped response under 10K and active per-tool/fallback limits; too-small envelopes stop reading. Numeric reader inputs are strict integers. Escape `<` in outer JSON to preserve untrusted data without exposing framework tags; decoding restores the document unchanged.

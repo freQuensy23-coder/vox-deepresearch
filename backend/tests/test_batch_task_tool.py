@@ -1,4 +1,5 @@
 import importlib
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -15,6 +16,20 @@ from deerflow.tools.builtins.batch_task_tool import BatchTaskItem
 
 tool_module = importlib.import_module("deerflow.tools.builtins.batch_task_tool")
 _MISSING = object()
+
+
+@pytest.mark.asyncio
+async def test_batch_status_wait_returns_on_progress(monkeypatch):
+    submitter = AsyncMock()
+    submitter.get_batch.side_effect = [
+        {"id": "batch-1", "status": "running", "total_items": 2, "counts": {"running": 2}},
+        {"id": "batch-1", "status": "running", "total_items": 2, "counts": {"running": 1, "succeeded": 1}},
+    ]
+    monkeypatch.setattr(tool_module, "get_subagent_batch_submitter", lambda: submitter)
+    monkeypatch.setattr(tool_module.asyncio, "sleep", AsyncMock())
+    result = await tool_module.batch_status.coroutine(runtime=_runtime(), batch_id="batch-1", wait_seconds=60)
+    assert json.loads(result)["counts"]["succeeded"] == 1
+    assert submitter.get_batch.await_count == 2
 
 
 def _runtime(thread_incarnation=_MISSING):

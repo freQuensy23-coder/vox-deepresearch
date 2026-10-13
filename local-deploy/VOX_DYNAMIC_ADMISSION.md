@@ -21,7 +21,10 @@ healthy request starts.
   are not stored in controller state.
 - The first assigned cohort establishes a response-time distribution while
   admission continues within the initial budget. Early fast completions do not
-  exclude still-running slow members from this initial measurement. Successful
+  exclude still-running slow members from this initial measurement. After a
+  reduction, this cohort is bounded by the available shared and class capacity;
+  a one-slot budget does not require five sequential successes before growth
+  can resume. Every already-assigned cohort member must still finish. Successful
   initial-cohort or class-exclusive requests under bounded shared load update
   a window of up to 16 observations. Its median estimates typical cost;
   its empirical 90th percentile accounts for natural variation. A single fast

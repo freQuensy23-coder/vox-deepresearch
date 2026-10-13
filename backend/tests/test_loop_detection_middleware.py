@@ -1,6 +1,7 @@
 """Tests for LoopDetectionMiddleware."""
 
 import copy
+import json
 from collections import OrderedDict
 from types import SimpleNamespace
 from typing import Any
@@ -108,6 +109,77 @@ def _make_state(tool_calls=None, content=""):
 
 def _bash_call(cmd="ls"):
     return {"name": "bash", "id": f"call_{cmd}", "args": {"command": cmd}}
+
+
+@pytest.mark.parametrize("name", ["bash", "batch_status"])
+def test_live_background_polls_do_not_trigger_either_loop_limit(name):
+    mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5, tool_freq_warn=3, tool_freq_hard_limit=5)
+    runtime = _make_runtime()
+    key = "session_id" if name == "bash" else "batch_id"
+    target = "a" * 32 if name == "bash" else "subagent-batch-test"
+    args = {key: target, **({"command": "", "wait_seconds": 60} if name == "bash" else {})}
+    result = {key: target, "status": "running"}
+    messages = []
+    for i in range(12):
+        call = {"name": name, "id": f"poll-{i}", "args": args}
+        messages.append(AIMessage(content="", tool_calls=[call]))
+        assert mw._apply({"messages": messages}, runtime) is None
+        messages.append(ToolMessage(content=json.dumps(result), name=name, tool_call_id=call["id"]))
+    assert not mw._pending_warnings.get(_pending_key())
+    assert mw.consume_stop_reason("test-run") is None
+
+
+@pytest.mark.parametrize("last_result", ['{"session_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"completed"}', "session not found"])
+def test_poll_exemption_ends_with_latest_terminal_or_failed_result(last_result):
+    mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+    runtime = _make_runtime()
+    args = {"command": "", "session_id": "a" * 32, "wait_seconds": 60}
+    initial = {"name": "bash", "id": "old-poll", "args": args}
+    messages = [AIMessage(content="", tool_calls=[initial]), ToolMessage(content=json.dumps({"session_id": "a" * 32, "status": "running"}), name="bash", tool_call_id="old-poll")]
+    for i in range(7):
+        call = {"name": "bash", "id": f"poll-{i}", "args": args}
+        messages.append(AIMessage(content="", tool_calls=[call]))
+        stopped = mw._apply({"messages": messages}, runtime)
+        if stopped:
+            break
+        messages.append(ToolMessage(content=last_result, name="bash", tool_call_id=call["id"]))
+    assert stopped is not None
+    assert mw.consume_stop_reason("test-run") == "loop_capped"
+
+
+def test_repetition_warning_requests_reassessment_not_final_answer():
+    mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+    runtime = _make_runtime()
+    for _ in range(3):
+        mw._apply(_make_state([_bash_call("ls")]), runtime)
+    text = mw._pending_warnings[_pending_key()][0]
+    assert "Stop calling tools" not in text
+    assert "produce your final answer now" not in text
+    assert "continue" in text.lower()
+
+
+def test_live_poll_does_not_hide_repeated_command_in_same_response():
+    mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+    runtime = _make_runtime()
+    args = {"command": "", "session_id": "a" * 32, "wait_seconds": 60}
+    previous = {"name": "bash", "id": "previous", "args": args}
+    messages = [AIMessage(content="", tool_calls=[previous]), ToolMessage(content=json.dumps({"session_id": "a" * 32, "status": "running"}), name="bash", tool_call_id="previous")]
+    for i in range(5):
+        calls = [{"name": "bash", "id": f"poll-{i}", "args": args}, _bash_call("ls")]
+        stopped = mw._apply({"messages": messages + [AIMessage(content="", tool_calls=calls)]}, runtime)
+    assert stopped is not None
+
+
+@pytest.mark.parametrize("evidence_kind", ["human", "unpaired_tool"])
+def test_claimed_running_session_without_paired_tool_result_still_counts(evidence_kind):
+    mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+    runtime = _make_runtime()
+    content = json.dumps({"session_id": "a" * 32, "status": "running"})
+    evidence = HumanMessage(content=content) if evidence_kind == "human" else ToolMessage(content=content, name="bash", tool_call_id="unknown")
+    call = {"name": "bash", "id": "poll", "args": {"command": "", "session_id": "a" * 32}}
+    for _ in range(5):
+        stopped = mw._apply({"messages": [evidence, AIMessage(content="", tool_calls=[call])]}, runtime)
+    assert stopped is not None
 
 
 class TestHashToolCalls:

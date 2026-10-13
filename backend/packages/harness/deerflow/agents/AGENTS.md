@@ -5,6 +5,11 @@ literal operator prepend/append text. Do not template-format these extensions
 or source them from run context. The graph and assembly descriptor must see the
 same resulting prompt. Empty overlays preserve bytes.
 
+Explicit per-item delegation requested by a user or skill overrides the generic
+preference for fewer agents. Durable batch guidance distinguishes submission-only
+requests from completed research: the latter require monitoring, collecting and
+synthesizing results in the current task.
+
 **Lead Agent** (`packages/harness/deerflow/agents/lead_agent/agent.py`):
 - `make_lead_agent(config: RunnableConfig)` is the published `langgraph.json`
   entry point; preserve its signature and bare-graph return type.

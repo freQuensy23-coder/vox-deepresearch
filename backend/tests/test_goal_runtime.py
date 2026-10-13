@@ -499,10 +499,10 @@ def test_evaluate_goal_completion_uses_non_thinking_model(monkeypatch):
     fake_model.ainvoke.assert_awaited_once()
     # No thread_id/user_id supplied here, and Langfuse is not enabled in the
     # ambient test env, so inject_langfuse_metadata() is a no-op and the
-    # config is unchanged from the plain run_name — see
+    # local tracing still supplies operation/run/thread metadata. See
     # test_evaluate_goal_completion_injects_langfuse_metadata below for the
     # Langfuse-enabled case.
-    assert fake_model.ainvoke.await_args.kwargs["config"] == {"run_name": "goal_evaluator"}
+    assert fake_model.ainvoke.await_args.kwargs["config"] == {"run_name": "goal_evaluator", "metadata": {"operation": "goal_evaluator", "run_id": None, "thread_id": None}}
 
 
 def test_evaluate_goal_completion_shows_tool_evidence_to_the_evaluator():

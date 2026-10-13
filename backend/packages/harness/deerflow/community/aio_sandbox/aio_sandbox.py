@@ -948,6 +948,10 @@ class AioSandbox(Sandbox):
                         env=env,
                         hard_timeout=timeout,
                         request_options=self._command_request_options(timeout),
+                        # Internal bounded JSON probes carry base64 frames for
+                        # manifests up to 16 MiB. The SDK's ordinary output cap
+                        # truncates those frames, making a valid file unreadable.
+                        **({"max_output_length": 32 * 1024 * 1024} if env.get("_DEERFLOW_SIZE_PROBE") == "1" else {}),
                     )
                     data = result.data if result else None
                     stdout = (data.stdout or "") if data else ""

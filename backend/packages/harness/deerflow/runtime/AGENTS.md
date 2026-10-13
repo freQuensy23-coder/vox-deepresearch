@@ -1,5 +1,11 @@
 ### Stream Bridge Heartbeats
 
+Goal evaluation distinguishes managed work from external dependencies. Before
+standing down with `external_wait`, the worker checks batch IDs from trusted
+`batch_task` ToolMessage metadata through the owner-scoped service. Live batches
+in this thread change that verdict to `goal_not_met_yet`; the existing user-input,
+cancellation, goal-race and continuation-budget guards still apply.
+
 Memory/Redis bridges keep startup-only `stream_bridge.heartbeat_interval_seconds`; explicit `subscribe(..., heartbeat_interval=...)` overrides it. Provider contexts drain owned cache/bridge/checkpointer/Store teardown across cancellation. `close_agent_stream()` shields close to completion: preserve counts, defer host cancellation, balance repeats, keep active errors, log attached close failures at callers, map close cancellation to failure, never time out.
 
 ### Checkpoint Channel Modes (`full` / `delta`)

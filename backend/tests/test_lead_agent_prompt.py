@@ -315,12 +315,12 @@ def test_apply_prompt_template_clamps_subagent_limits_to_enforced_bounds(monkeyp
     prompt = prompt_module.apply_prompt_template(
         subagent_enabled=True,
         max_concurrent_subagents=99,
-        max_total_subagents=99,
+        max_total_subagents=5000,
         app_config=explicit_config,
     )
 
     assert "MAXIMUM 4 `task` CALLS PER RESPONSE" in prompt
-    assert "MAXIMUM 50 `task` CALLS PER RUN" in prompt
+    assert "MAXIMUM 1000 `task` CALLS PER RUN" in prompt
 
 
 def test_apply_prompt_template_uses_configured_subagent_total_when_unset(monkeypatch):

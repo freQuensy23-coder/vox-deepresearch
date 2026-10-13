@@ -31,6 +31,22 @@ class _CollectingBridge:
         self.events.append((event, payload))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batch_thread, expected", [("research", "goal_not_met_yet"), ("other", "external_wait")])
+async def test_owned_running_batch_is_not_an_external_goal_blocker(monkeypatch, batch_thread, expected):
+    from types import SimpleNamespace
+
+    from deerflow.subagents import batch_runtime
+
+    submitter = SimpleNamespace(get_batch=AsyncMock(return_value={"id": "batch-1", "thread_id": batch_thread, "status": "running"}))
+    monkeypatch.setattr(batch_runtime, "get_subagent_batch_submitter", lambda: submitter)
+    messages = [ToolMessage(content="accepted", tool_call_id="submit", name="batch_task", additional_kwargs={"subagent_batch_id": "batch-1"})]
+    evaluation = GoalEvaluation(satisfied=False, blocker="external_wait", reason="Waiting for depth agents.", evidence_summary="Research not complete.")
+    result = await worker._continue_managed_batch_work(evaluation, messages, thread_id="research", user_id="owner")
+    assert result["blocker"] == expected
+    submitter.get_batch.assert_awaited_once_with(batch_id="batch-1", user_id="owner")
+
+
 class _ClearBeforeSecondGoalReadCheckpointer:
     """Wrap a saver and clear the goal just before the evaluator write rereads.
 
@@ -146,6 +162,38 @@ async def _write_messages(checkpointer: InMemorySaver, *, thread_id: str, messag
         metadata,
         {"messages": channel_versions["messages"]},
     )
+
+
+@pytest.mark.asyncio
+async def test_goal_worker_continues_after_evaluator_mislabels_live_batch(monkeypatch):
+    from types import SimpleNamespace
+
+    from deerflow.subagents import batch_runtime
+
+    checkpointer = InMemorySaver()
+    thread_id = "batch-research"
+    await _seed_goal_thread(
+        checkpointer,
+        thread_id=thread_id,
+        goal_text="Research all communities and produce the report",
+        messages=[
+            HumanMessage(content="Complete the research."),
+            AIMessage(content="", tool_calls=[{"id": "submit", "name": "batch_task", "args": {}}]),
+            ToolMessage(content="Batch accepted", name="batch_task", tool_call_id="submit", additional_kwargs={"subagent_batch_id": "batch-1"}),
+            AIMessage(content="The report is not ready; the depth agents are still working."),
+        ],
+    )
+    submitter = SimpleNamespace(get_batch=AsyncMock(return_value={"id": "batch-1", "thread_id": thread_id, "status": "running"}))
+    monkeypatch.setattr(batch_runtime, "get_subagent_batch_submitter", lambda: submitter)
+    monkeypatch.setattr(worker, "evaluate_goal_completion", AsyncMock(return_value=GoalEvaluation(satisfied=False, blocker="external_wait", reason="Agents still working.", evidence_summary="No report.")))
+    continuation = await worker._prepare_goal_continuation_input(
+        accessor=_full_accessor(checkpointer), bridge=_CollectingBridge(), checkpointer=checkpointer, thread_id=thread_id, run_id="run-1", user_id="owner", model_name="test", app_config=None
+    )
+    assert continuation is not None
+    assert "monitor the batch" in continuation["messages"][0].content
+    saved = await read_thread_goal(checkpointer, thread_id)
+    assert saved["last_evaluation"]["blocker"] == "goal_not_met_yet"
+    assert "stand_down_reason" not in saved["last_evaluation"]
 
 
 @pytest.mark.asyncio

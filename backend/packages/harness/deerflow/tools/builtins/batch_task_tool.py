@@ -325,7 +325,7 @@ async def batch_task(
 
 
 @tool("batch_status", parse_docstring=True)
-async def batch_status(runtime: Runtime, batch_id: str) -> str:
+async def batch_status(runtime: Runtime, batch_id: str, wait_seconds: Annotated[StrictInt, Field(ge=0, le=60)] = 0) -> str:
     """Return a compact durable batch progress snapshot.
 
     Counts describe execution status, not acceptance. Inspect item queries or
@@ -333,6 +333,7 @@ async def batch_status(runtime: Runtime, batch_id: str) -> str:
 
     Args:
         batch_id: Server batch identifier returned by ``batch_task``.
+        wait_seconds: Wait up to 60 seconds for progress when no independent work remains.
     """
     submitter = _batch_submitter()
     if submitter is None:
@@ -340,6 +341,16 @@ async def batch_status(runtime: Runtime, batch_id: str) -> str:
     batch = await submitter.get_batch(batch_id=batch_id, user_id=resolve_runtime_user_id(runtime))
     if batch is None:
         return "Batch not found."
+    initial = (batch["status"], dict(batch["counts"]))
+    deadline = asyncio.get_running_loop().time() + wait_seconds
+    while batch["status"] in {"pending", "queued", "running"} and (batch["status"], batch["counts"]) == initial:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(1, remaining))
+        batch = await submitter.get_batch(batch_id=batch_id, user_id=resolve_runtime_user_id(runtime))
+        if batch is None:
+            return "Batch not found."
     return json.dumps(
         {
             "batch_id": batch["id"],

@@ -449,6 +449,9 @@ async def evaluate_goal_completion(
         + "Use blocker needs_user_input when the assistant is waiting on the user, run_failed when the turn failed, "
         "external_wait when work is waiting on an outside system, goal_not_met_yet when useful autonomous work can continue, "
         "and none only when satisfied is true.\n"
+        "Managed background commands and subagent batches are part of the assistant's work, not an external blocker. "
+        "When the requested outcome needs their results, use goal_not_met_yet while the assistant can monitor, collect, retry or synthesize them, "
+        "or continue other unfinished work. Accepting a batch does not satisfy a request for a completed investigation.\n"
         "Set relied_on_assumption to true only when a satisfied verdict relies on a stated assumption. "
         'Output exactly one JSON object: {"satisfied": boolean, "blocker": string, "reason": string, "evidence_summary": string, "relied_on_assumption": boolean}.'
     )

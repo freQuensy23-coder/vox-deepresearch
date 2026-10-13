@@ -7,7 +7,7 @@ Detection strategy:
   1. After each model response, hash the tool calls (name + args).
   2. Track recent hashes in a sliding window.
   3. If the same hash appears >= warn_threshold times, queue a
-     "you are repeating yourself — wrap up" warning for the current
+     "check progress and adjust the repeated operation" warning for the current
      thread/run. The warning is **injected at the next model call** (in
      ``wrap_model_call``) as a ``HumanMessage`` appended to the message
      list, *after* all ToolMessage responses to the previous
@@ -74,7 +74,7 @@ from typing import TYPE_CHECKING, Literal, override
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 
 from deerflow.agents.middlewares._bounded_dict import BoundedDict
@@ -227,7 +227,45 @@ def _hash_tool_calls(tool_calls: list[dict]) -> str:
     return hashlib.md5(blob.encode()).hexdigest()[:12]
 
 
-_WARNING_MSG = "[LOOP DETECTED] You are repeating the same tool calls. Stop calling tools and produce your final answer now. If you cannot complete the task, summarize what you accomplished so far."
+_WARNING_MSG = (
+    "[LOOP DETECTED] The same tool operation has been repeated. Check its latest result before repeating it again. "
+    "If a background task is still running, wait for it and continue independent work; do not cancel it merely because it is slow. "
+    "If the operation is failing or adds no information, adjust the request or use another approach. "
+    "Continue toward the user's full objective and preserve unresolved work. This warning does not require a final answer or mean the task is complete."
+)
+
+
+def _is_live_poll(call: dict, messages: list) -> bool:
+    """Exempt a status read only when its latest paired tool result says live.
+
+    A claimed session ID alone is insufficient. Errors and terminal responses
+    revoke the exemption; ordinary commands and cancellation stay counted.
+    """
+    name = call.get("name")
+    args, fallback = _normalize_tool_call_args(call.get("args"))
+    if fallback is not None or name not in {"bash", "batch_status"}:
+        return False
+    if name == "bash" and (args.get("command", "") or args.get("cancel")):
+        return False
+    key = "session_id" if name == "bash" else "batch_id"
+    target = args.get(key)
+    if not isinstance(target, str) or not target:
+        return False
+    prior_calls = {tc.get("id"): tc for message in messages for tc in (getattr(message, "tool_calls", None) or []) if tc.get("name") == name}
+    for message in reversed(messages):
+        if not isinstance(message, ToolMessage) or message.tool_call_id not in prior_calls:
+            continue
+        prior_args, _ = _normalize_tool_call_args(prior_calls[message.tool_call_id].get("args"))
+        try:
+            result = json.loads(message.content) if isinstance(message.content, str) else None
+        except (ValueError, RecursionError):
+            result = None
+        result = result if isinstance(result, dict) else {}
+        if prior_args.get(key) != target and result.get(key) != target:
+            continue
+        return message.status != "error" and result.get(key) == target and result.get("status") in ({"running"} if name == "bash" else {"pending", "queued", "running"})
+    return False
+
 
 _TOOL_FREQ_WARNING_MSG = (
     "[TOOL FREQUENCY NOTICE] You have called {tool_name} {count} times. Frequency alone does not establish a loop. "
@@ -567,6 +605,12 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
             return None
 
         tool_calls = getattr(last_msg, "tool_calls", None)
+        if not tool_calls:
+            return None
+
+        # Waiting on confirmed live work is not a repeated research operation.
+        # Exclude it from both identical-call and per-tool-frequency counters.
+        tool_calls = [call for call in tool_calls if not _is_live_poll(call, messages[:-1])]
         if not tool_calls:
             return None
 
