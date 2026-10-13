@@ -1,7 +1,7 @@
-# Dynamic Vox admission — local implementation
+# Dynamic Vox admission
 
-`vox_adaptive_relay.py` is an opt-in relay using `adaptive_gate.py`. This change
-has not been deployed. [Real Vox measurements](evals/dynamic-admission-live-2026-10-12.md)
+`vox_adaptive_relay.py` is an opt-in relay using `adaptive_gate.py`. It was
+enabled on `openclaw-dp` on 13 October 2026 (runtime release `038d076b`). [Real Vox measurements](evals/dynamic-admission-live-2026-10-12.md)
 record a 27.7% median elapsed-time reduction on the tested workload. The committed
 test suites and synthetic comparison runners use localhost fixtures and fake
 credentials; they do not contact Vox or `openclaw-dp`.
@@ -79,8 +79,10 @@ healthy request starts.
 
 The executable requires `VOX_RELAY_ADAPTIVE=1`. Its separate state path is
 `VOX_RELAY_ADAPTIVE_STATE_DIR`; existing key-file, bind-address, and port settings
-are retained. This opt-in is not a deployment instruction. No Compose or
-production settings are changed by this implementation.
+are retained. The production release uses an explicit Compose override to start
+`vox_adaptive_relay.py` and mounts `adaptive_gate.py`, `vox_json_probe.py`, and a
+separate v6 state directory. The previous relay state is preserved; its cooldown
+was checked as expired before switching. Gateway and relay readiness checks passed.
 
 The current controller state format is version 6. Older adaptive state files are
 rejected rather than silently reinterpreted. Local comparisons use fresh state

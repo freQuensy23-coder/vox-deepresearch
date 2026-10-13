@@ -41,8 +41,8 @@ record the live runs and what they do and do not demonstrate. Local credentials
 and raw research outputs are not included in this repository.
 
 An opt-in [dynamic Vox relay](local-deploy/VOX_DYNAMIC_ADMISSION.md) adjusts
-concurrency from observed latency and errors. It is developed and tested locally;
-it has not been deployed. [Real Vox measurements](local-deploy/evals/dynamic-admission-live-2026-10-12.md)
+concurrency from observed latency and errors. It was enabled on `openclaw-dp`
+on 13 October 2026 with managed background commands and the increased relay deadlines. [Real Vox measurements](local-deploy/evals/dynamic-admission-live-2026-10-12.md)
 record the observed speed improvement and its limits separately from synthetic tests.
 
 Long Vox commands use managed `bash(background=True)`: completed commands return
