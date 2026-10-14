@@ -137,7 +137,7 @@ Root-level orchestration and config:
 
 - `Makefile` - main local/dev/docker command entrypoints
 - `config.example.yaml` - primary app config template
-- `config.yaml` - local active config (gitignored)
+- `config.yaml` - active config (committed; secrets only via $ENV references)
 - `docker/docker-compose-dev.yaml` - Docker dev topology
 - `.github/workflows/backend-unit-tests.yml` - PR validation workflow
 
