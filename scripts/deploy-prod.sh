@@ -56,7 +56,7 @@ fi
 export PATH="$DEST/.node/bin:$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 # Python lives in the checkout too, so the unprivileged gateway user can run it.
-(cd backend && UV_PYTHON_INSTALL_DIR="$DEST/.uv-python" uv sync --frozen --no-dev)
+(cd backend && UV_PYTHON_INSTALL_DIR="$DEST/.uv-python" uv sync --frozen --no-dev --python-preference only-managed)
 
 (
     cd frontend

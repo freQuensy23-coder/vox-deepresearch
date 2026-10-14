@@ -22,7 +22,7 @@ node = str(source / ".node/bin/node")
 GATEWAY_UID = 1001
 
 python = str(source / "backend/.venv/bin/python")
-env = {"PATH": f"{source}/backend/.venv/bin:/usr/local/bin:/usr/bin:/bin", "HOME": str(home)}
+env = {"PATH": f"{source}/backend/.venv/bin:{source}/.node/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(home)}
 
 
 def drop_to_gateway_user():
@@ -42,20 +42,46 @@ services = {
         drop_to_gateway_user,
     ),
     "frontend": ([node, "server.js"], source / "frontend/build", dict(env, NODE_ENV="production", HOSTNAME="127.0.0.1", PORT="3000"), None),
-    "proxy": (["nginx", "-c", str(source / "local-deploy/runpod-nginx.conf")], source, env, None),
+    "proxy": (["/usr/sbin/nginx", "-c", str(source / "local-deploy/runpod-nginx.conf")], source, env, None),
 }
 
 
-def stop(pid):
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
+def ancestors():
+    pid, chain = os.getpid(), set()
+    while pid > 1:
+        chain.add(pid)
+        pid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+    return chain
+
+
+def ours():
+    """Processes started from this checkout (any previous launch, tracked or not),
+    except this launcher and the deploy shell that runs it."""
+    skip = ancestors()
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit() and int(entry.name) not in skip:
+            try:
+                if str(source) in (entry / "cmdline").read_bytes().decode(errors="replace"):
+                    yield int(entry.name)
+            except OSError:
+                pass
+
+
+def stop_all():
+    for pid in ours():
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     for _ in range(100):
-        if not Path(f"/proc/{pid}").exists():
+        if not list(ours()):
             return
         time.sleep(0.1)
-    os.killpg(pid, signal.SIGKILL)
+    for pid in ours():
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 logs.mkdir(parents=True, exist_ok=True)
@@ -73,19 +99,7 @@ deer_flow = source / "backend/.deer-flow"
 if not deer_flow.exists():
     deer_flow.symlink_to(source / "runtime")
 
-for pid in (json.loads(pid_file.read_text()) if pid_file.exists() else {}).values():
-    stop(pid)
-# nginx records its master in the pid file named by runpod-nginx.conf.
-nginx_pid = Path("/run/vox-migration-nginx.pid")
-if nginx_pid.exists():
-    try:
-        os.kill(int(nginx_pid.read_text()), signal.SIGQUIT)
-    except (ProcessLookupError, ValueError):
-        pass
-    for _ in range(100):
-        if not nginx_pid.exists():
-            break
-        time.sleep(0.1)
+stop_all()
 
 started = {}
 for role, (command, cwd, role_env, preexec) in services.items():
@@ -101,5 +115,5 @@ for role, (command, cwd, role_env, preexec) in services.items():
             preexec_fn=preexec,
         )
     started[role] = child.pid
-pid_file.write_text(json.dumps(started, indent=2), encoding="utf-8")
+    pid_file.write_text(json.dumps(started, indent=2), encoding="utf-8")
 print(json.dumps({"started": started}), flush=True)
