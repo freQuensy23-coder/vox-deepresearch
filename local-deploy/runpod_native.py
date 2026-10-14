@@ -1,12 +1,13 @@
 """(Re)start every research service on the RunPod host. Run by scripts/deploy-prod.sh.
 
-Python comes from backend/.venv (uv sync), the frontend from frontend/build
-(Next standalone, built by deploy-prod.sh). Settings come from config.yaml, secrets
+Python comes from backend/.venv (uv sync), Node from .node, the frontend from
+frontend/build (Next standalone); deploy-prod.sh prepares all three. Settings come from config.yaml, secrets
 from .env; the Codex login is the service user's ~/.codex/auth.json.
 """
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -17,7 +18,7 @@ base = Path("/workspace/vox-openclaw-dp")
 home = base / "native-home"
 logs = base / "migration/native-logs"
 pid_file = base / "migration/native-pids.json"
-node = "/opt/vox/native-runtime/usr/bin/node"
+node = str(source / ".node/bin/node")
 GATEWAY_UID = 1001
 
 python = str(source / "backend/.venv/bin/python")
@@ -60,6 +61,14 @@ def stop(pid):
 logs.mkdir(parents=True, exist_ok=True)
 home.mkdir(exist_ok=True)
 os.chown(home, GATEWAY_UID, GATEWAY_UID)
+codex_login = home / ".codex/auth.json"
+if not codex_login.exists():
+    # The Codex login used to live in .deployment/; keep using that account.
+    codex_login.parent.mkdir(exist_ok=True)
+    shutil.copyfile(source / ".deployment/codex-auth.json", codex_login)
+    for path in (codex_login.parent, codex_login):
+        os.chown(path, GATEWAY_UID, GATEWAY_UID)
+    os.chmod(codex_login, 0o600)
 deer_flow = source / "backend/.deer-flow"
 if not deer_flow.exists():
     deer_flow.symlink_to(source / "runtime")

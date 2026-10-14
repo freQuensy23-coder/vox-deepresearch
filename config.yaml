@@ -1907,13 +1907,16 @@ sandbox:
 # Process-wide execution capacity. These fields are restart-required and are
 # shared by ordinary `task` calls and durable batches. Waiting work is async;
 # queued subagents do not occupy a scheduler thread.
-# Production. Deploy only with scripts/deploy-prod.sh (main, pushed). The prod SSH key
-# lives on the jump host; deploy-prod.sh runs `ssh <jump> <target_ssh> ...`.
+# Production (RunPod pod). Deploy only with scripts/deploy-prod.sh from the
+# pushed main. The pod's address is looked up through the RunPod API
+# (RUNPOD_API_KEY in .env) because its SSH port changes when the pod restarts;
+# ssh_key must be a key from the RunPod account.
 deploy:
-  jump: openclaw-dp
-  target_ssh: ssh -F /home/private/.ssh/config.d/vox-prod.conf vox-prod
+  pod_id: 8gisi9dzedxt4e
+  ssh_key: ~/.ssh/ssh_runpod
   path: /workspace/vox-openclaw-dp/home/private/vox-deepresearch
   repo: https://github.com/freQuensy23-coder/vox-deepresearch.git
+  node_version: 22.23.3
 
 # Vox proxy (local-deploy/vox_relay.py): holds VOX_API_KEY from .env, sends one
 # request to Vox at a time (FIFO), retries failures internally and returns only
