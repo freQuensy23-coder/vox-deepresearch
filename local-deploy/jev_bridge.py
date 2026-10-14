@@ -79,9 +79,10 @@ def validate(method, path, body):
             CLIENT.validate_body(value)
         else:
             if (
-                set(value) != {"requests", "policy"}
-                or not isinstance(value["policy"], dict)
-                or value["policy"].get("allow_paid", False) is not False
+                not isinstance(value, dict)
+                or "requests" not in value
+                or set(value) - {"requests", "policy"}
+                or ("policy" in value and not isinstance(value["policy"], dict))
             ):
                 raise ValueError()
             entries = value["requests"]

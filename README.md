@@ -26,6 +26,8 @@ the lead assigns every discovered relevant group and continues until the
 requested map is complete. Scripts and Jev may accelerate search, export,
 analysis and dispatch; relevance and research decisions remain with the lead.
 Unresolved thematic groups stay pending rather than disappearing from coverage.
+The Jev client and bridge pass optional batch policy unchanged and otherwise use
+the gateway defaults. They add no free-only policy or question/criteria limits.
 
 Keyword searches default to five pages of 2000 messages, about 10,000 matches
 per invocation. The lead inspects those messages before narrowing noisy keywords
@@ -43,9 +45,9 @@ disabled (`timeout_seconds: 0`, `queue_timeout_seconds: 0`); cancellation remain
 Parallel agents can read shared skill files without occupying worker threads
 while waiting for the file gate; read-before-write protection remains active.
 
-The research sandbox is shared by the lead and its depth agents. Its production
-resource budget and API readiness check are documented in
-[the provisioner guide](local-deploy/README.md#shared-sandbox-resources).
+The lead and depth agents execute as local processes without another VM or
+container. Prompts instruct them to write inside their assigned workspace;
+[the native deployment guide](local-deploy/README.md) describes the runtime.
 
 Follow [Quick Start](#quick-start) to configure a model and start the application.
 Supply `VOX_API_KEY` through the run's `config.context.secrets` so the skill can

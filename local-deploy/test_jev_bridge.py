@@ -74,7 +74,69 @@ def test_batch_preserves_agent_policy_and_exceeds_old_client_caps():
     module.validate("POST", "/v1/batches", json.dumps(valid).encode())
 
 
-def test_more_than_four_concurrent_requests_complete():
+@pytest.mark.parametrize(
+    "policy",
+    [
+        None,
+        {},
+        {"allow_paid": True, "concurrency": 32},
+        {"allow_paid": False, "free_wait_seconds": 0},
+    ],
+)
+def test_batch_policy_forwarding_preserves_gateway_defaults_and_agent_values(policy):
+    import io
+    from types import SimpleNamespace
+
+    module = load()
+    body = {
+        "requests": [
+            {
+                "custom_id": "synthetic",
+                "body": {
+                    "model": "jev-latest",
+                    "state": "Synthetic",
+                    "questions": {"relevant": {"type": "noul"}},
+                },
+            }
+        ]
+    }
+    if policy is not None:
+        body["policy"] = policy
+    raw = json.dumps(body).encode()
+    calls = []
+
+    class Gateway:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, method, path, body=None, headers=None):
+            calls.append((method, path, body, headers))
+
+        def getresponse(self):
+            return SimpleNamespace(
+                status=202, read=io.BytesIO(b'{"id":"synthetic"}').read
+            )
+
+        def close(self):
+            pass
+
+    assert module.forward(
+        "POST", "/v1/batches", raw, "synthetic-key", connection_factory=Gateway
+    ) == (202, b'{"id":"synthetic"}')
+    assert calls == [
+        (
+            "POST",
+            "/v1/batches",
+            raw,
+            {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer synthetic-key",
+            },
+        )
+    ]
+
+
+def test_more_than_four_concurrent_requests_complete(monkeypatch):
     import concurrent.futures
     import http.client
     import threading
@@ -82,18 +144,16 @@ def test_more_than_four_concurrent_requests_complete():
 
     module = load()
 
-    class Handler(module.BaseHTTPRequestHandler):
-        def do_GET(self):
-            time.sleep(0.3)
-            self.send_response(200)
-            self.send_header("Content-Length", "2")
-            self.end_headers()
-            self.wfile.write(b"ok")
+    calls = []
 
-        def log_message(self, *args):
-            pass
+    def forward(method, path, body, key):
+        calls.append((method, path, body, key))
+        time.sleep(0.3)
+        return 200, b'{"models":[]}'
 
-    server = module.InternalServer(("127.0.0.1", 0), Handler)
+    monkeypatch.setattr(module, "forward", forward)
+    server = module.InternalServer(("127.0.0.1", 0), module.Handler)
+    server.key = "synthetic-key"
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
 
@@ -109,7 +169,8 @@ def test_more_than_four_concurrent_requests_complete():
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
             results = list(pool.map(lambda _: call(), range(6)))
-        assert results == [(200, b"ok")] * 6
+        assert results == [(200, b'{"models":[]}')] * 6
+        assert calls == [("GET", "/v1/models", b"", "synthetic-key")] * 6
     finally:
         server.shutdown()
         server.server_close()

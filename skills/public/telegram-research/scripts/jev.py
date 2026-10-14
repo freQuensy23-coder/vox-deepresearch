@@ -30,40 +30,25 @@ def encode(value):
 
 
 def validate_body(body):
-    if not isinstance(body, dict) or set(body) != {"model", "state", "questions"}:
+    if not isinstance(body, dict) or not {"model", "state", "questions"} <= set(body):
         raise ClientError("invalid_body")
     if body["model"] not in MODELS or not isinstance(body["state"], (str, dict, list)):
         raise ClientError("invalid_body")
     questions = body["questions"]
-    if not isinstance(questions, dict) or not 1 <= len(questions) <= 16:
+    if not isinstance(questions, dict) or not questions:
         raise ClientError("invalid_questions")
     for name, question in questions.items():
-        if (
-            not isinstance(name, str)
-            or not name
-            or len(name) > 128
-            or not isinstance(question, dict)
-        ):
-            raise ClientError("invalid_questions")
-        if set(question) - {"type", "instructions", "criteria"}:
+        if not isinstance(name, str) or not isinstance(question, dict):
             raise ClientError("invalid_questions")
         kind = question.get("type")
         criteria = question.get("criteria")
         if kind not in {"noul", "choice", "score"}:
             raise ClientError("invalid_questions")
-        if kind == "choice" and (
-            not isinstance(criteria, dict) or not 1 <= len(criteria) <= 32
-        ):
+        if kind == "choice" and not isinstance(criteria, dict):
             raise ClientError("invalid_questions")
-        if kind == "score" and (
-            not isinstance(criteria, list) or not 1 <= len(criteria) <= 32
-        ):
+        if kind == "score" and (not isinstance(criteria, list) or not criteria):
             raise ClientError("invalid_questions")
-        if (
-            kind == "noul"
-            and criteria is not None
-            and (not isinstance(criteria, dict) or set(criteria) - {"true", "false"})
-        ):
+        if kind == "noul" and criteria is not None and not isinstance(criteria, dict):
             raise ClientError("invalid_questions")
     if len(encode(body)) > MAX_BYTES:
         raise ClientError("request_too_large")
@@ -78,10 +63,7 @@ def requests_for(data):
         "policy",
     }:
         raise ClientError("invalid_input")
-    if "policy" in data and (
-        not isinstance(data["policy"], dict)
-        or data["policy"].get("allow_paid", False) is not False
-    ):
+    if "policy" in data and not isinstance(data["policy"], dict):
         raise ClientError("invalid_policy")
     items = data.get("items")
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_ITEMS:
@@ -216,10 +198,9 @@ def evaluate(data, call=request):
 
 def submit(data, call=request, persist=None):
     entries = requests_for(data)
-    body = {
-        "requests": entries,
-        "policy": {**data.get("policy", {}), "allow_paid": False},
-    }
+    body = {"requests": entries}
+    if "policy" in data:
+        body["policy"] = data["policy"]
     if len(encode(body)) > MAX_BYTES:
         raise ClientError("batch_too_large")
     metadata = call("POST", "/v1/batches", body)

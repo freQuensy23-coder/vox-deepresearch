@@ -89,7 +89,7 @@ def test_invalid_input_is_rejected_before_any_call(change):
     elif change == "unknown_type":
         data["questions"]["relevant"]["type"] = "generate"
     elif change == "bad_choice":
-        data["questions"]["role"]["criteria"] = {}
+        data["questions"]["role"]["criteria"] = []
     elif change == "empty":
         data["items"] = []
     else:
@@ -145,7 +145,7 @@ def test_batch_submission_preserves_agent_policy_and_readback():
     data = payload()
     data["policy"] = {"concurrency": 8, "free_wait_seconds": 600}
     handle = module.submit(data, request)
-    assert calls[0][2]["policy"] == {**data["policy"], "allow_paid": False}
+    assert calls[0][2]["policy"] == data["policy"]
     assert [row["custom_id"] for row in calls[0][2]["requests"]] == ["001", "two"]
     assert calls[1][:2] == ("GET", "/v1/batches/" + handle["id"])
     assert handle["ids"] == ["001", "two"]
@@ -254,4 +254,56 @@ def test_batch_larger_than_old_client_caps_reaches_gateway():
     handle = module.submit(data, request)
     assert len(handle["ids"]) == 65
     assert len(calls[0][2]["requests"]) == 65
-    assert calls[0][2]["policy"] == {"allow_paid": False}
+    assert "policy" not in calls[0][2]
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        None,
+        {},
+        {"allow_paid": True, "concurrency": 32},
+        {"allow_paid": False, "free_wait_seconds": 0},
+    ],
+)
+def test_batch_policy_is_transparent_to_the_gateway(policy):
+    module = load()
+    data = payload()
+    if policy is not None:
+        data["policy"] = policy
+    original = json.dumps(data)
+    calls = []
+
+    def request(method, path, body=None):
+        calls.append((method, path, body))
+        return {"id": "batch_" + "a" * 32, "total": 2}
+
+    module.submit(data, request)
+    submitted = calls[0][2]
+    assert ("policy" in submitted) == (policy is not None)
+    if policy is not None:
+        assert submitted["policy"] == policy
+    assert json.dumps(data) == original
+
+
+def test_gateway_request_fields_and_question_sizes_are_not_restricted():
+    module = load()
+    question_name = "x" * 129
+    body = {
+        "model": "jev-latest",
+        "state": "Synthetic",
+        "extra_request_field": "preserved",
+        "questions": {
+            **{
+                str(i): {"type": "noul", "extra_question_field": "preserved"}
+                for i in range(17)
+            },
+            question_name: {
+                "type": "choice",
+                "criteria": {str(i): str(i) for i in range(33)},
+            },
+            "score": {"type": "score", "criteria": [str(i) for i in range(33)]},
+            "": {"type": "noul", "criteria": {"extra_criterion_field": "preserved"}},
+        },
+    }
+    assert module.validate_body(body) is body

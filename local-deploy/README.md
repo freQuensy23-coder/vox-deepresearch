@@ -16,3 +16,7 @@ additional cap of 64 commands. Research supports 32 concurrent depth agents,
 1000 total agents and a queue of 1000, without an overall subagent time limit.
 
 Vox's adaptive relay is described in [VOX_DYNAMIC_ADMISSION.md](VOX_DYNAMIC_ADMISSION.md).
+
+The Jev client and bridge forward optional batch policy unchanged. Omitting it
+uses the gateway's own defaults; the research system adds no free-only policy,
+batch concurrency setting, or question/criteria size restrictions.
