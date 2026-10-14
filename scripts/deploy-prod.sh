@@ -21,17 +21,18 @@ SHA=$(git rev-parse HEAD)
 [ "$SHA" = "$(git rev-parse FETCH_HEAD)" ] || { echo "deploy: HEAD is not the pushed main ($REPO)" >&2; exit 1; }
 
 # The pod's SSH port changes on every restart; ask RunPod where it is now.
-read -r HOST PORT < <(backend/.venv/bin/python - "$POD" <<'PY'
+ADDRESS=$(backend/.venv/bin/python -c '
 import json, sys, urllib.request
 from dotenv import dotenv_values
-key = dotenv_values(".env")["RUNPOD_API_KEY"]
-query = {"query": 'query { pod(input: {podId: "%s"}) { runtime { ports { ip isIpPublic privatePort publicPort } } } }' % sys.argv[1]}
-request = urllib.request.Request("https://api.runpod.io/graphql", json.dumps(query).encode(), {"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+query = "query { pod(input: {podId: \"%s\"}) { runtime { ports { ip isIpPublic privatePort publicPort } } } }" % sys.argv[1]
+headers = dict(Authorization="Bearer " + dotenv_values(".env")["RUNPOD_API_KEY"])
+headers["Content-Type"] = "application/json"
+request = urllib.request.Request("https://api.runpod.io/graphql", json.dumps(dict(query=query)).encode(), headers)
 ports = json.load(urllib.request.urlopen(request, timeout=30))["data"]["pod"]["runtime"]["ports"]
 ssh = next(p for p in ports if p["privatePort"] == 22 and p["isIpPublic"])
 print(ssh["ip"], ssh["publicPort"])
-PY
-)
+' "$POD")
+read -r HOST PORT <<< "$ADDRESS"
 remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "$KEY" -p "$PORT" "root@$HOST" "$1"; }
 
 echo "deploy: $SHA to $HOST:$PORT"
