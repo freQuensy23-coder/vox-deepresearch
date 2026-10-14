@@ -172,7 +172,7 @@ def rig(tmp_path):
         options.update(kwargs)
         server = relay.AdaptiveRelayServer(
             ("127.0.0.1", 0),
-            key_file=key,
+            key=key.read_text(),
             state_dir=tmp_path / str(len(state.servers)),
             transport_factory=Transport,
             **options,

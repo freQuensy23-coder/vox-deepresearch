@@ -1,7 +1,5 @@
 # Local LLM traces
 
-Activated locally on 2026-10-11 in `local/vox-deepresearch-gateway:llm-tracing-20261011`. Deployment and real application-call receipts: `.deployment/llm-trace-activation/verification.json` and `deployed-readback.json`. Editing this checkout alone does not update the running gateway.
-
 `create_chat_model` installs an owner-scoped local callback independently of external tracing and `attach_tracing`. It records untruncated dispatched messages, invocation parameters and tool schemas, returned messages/tool calls/usage, streaming chunks and final aggregation, errors and cancellation. Lead, children, goal evaluation and summary models use this factory. Goal evaluation carries its native run ID; children carry their server-generated task ID; manual compaction binds its thread explicitly.
 
 Default location: `runtime_home()/llm-traces`. An operator may set `DEER_FLOW_LLM_TRACE_DIR` to a private, durable gateway-only directory. Never mount it into research sandboxes or serve it as an artifact directory. Owner buckets and call directories use SHA256 identifiers, directories are 0700 and records 0600. Each event is separately atomically published after file fsync, followed by directory fsync. There is no automatic truncation, expiry or deletion. Plan disk capacity and private backups before activation.
@@ -29,13 +27,3 @@ After independently confirming the old writer process has stopped, unfinished ca
 from deerflow.models.local_trace import mark_interrupted_calls
 mark_interrupted_calls(trace_root, process_instance_id=old_instance_id, confirmed_stopped=True)
 ```
-
-Offline proof runner: `.deployment/llm-trace-proof/run.py` uses the installed gateway image, network disabled, read-only sources and disposable synthetic fixtures. It preserves every test attempt's output and command receipt. Run after sourcing `/home/private/bin/docker-rootless-env`:
-
-```sh
-python .deployment/llm-trace-proof/run.py tests/test_local_llm_trace.py
-```
-
-## Activation gate
-
-Wait for all research and child activity to stop. Preserve the current image and all three Compose overlays. Build a new image from the reviewed source snapshot without changing model configuration, credentials or sandbox mounts. Confirm the trace directory is private, durable and not sandbox-visible, and budget disk growth. On native deployments, restart only the Gateway with the reviewed source and existing environment; on container deployments, preserve the existing operator overlays. Read back image/source hashes, effective configuration and readiness. Verify fresh traces and health with an explicitly authorized synthetic call, then inspect the exact new run/thread/call records. Do not restart an active run or imply old calls can be reconstructed.

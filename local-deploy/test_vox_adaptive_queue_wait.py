@@ -149,7 +149,7 @@ def local_server(tmp_path):
     def start(**options):
         server = relay.AdaptiveRelayServer(
             ("127.0.0.1", 0),
-            key_file=key,
+            key=key.read_text(),
             state_dir=tmp_path / str(len(running)),
             transport_factory=Transport,
             gate_options={"search_cap": 1, "initial_search": 1},

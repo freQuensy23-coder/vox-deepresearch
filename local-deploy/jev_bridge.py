@@ -179,9 +179,7 @@ class BridgeServer(socketserver.ThreadingMixIn, HTTPServer):
 
 def main():
     config = deploy_config.section("jev_bridge")
-    key = deploy_config.path(config["key_file"]).read_text(encoding="utf-8").strip()
-    if not key or "\n" in key or "\r" in key:
-        raise ValueError("Invalid Jev gateway key")
+    key = deploy_config.secret("JEV_GATEWAY_API_KEY")
     server = BridgeServer(("127.0.0.1", int(config["port"])), Handler)
     server.key = key
     server.gateway = urlsplit(config["gateway_url"])

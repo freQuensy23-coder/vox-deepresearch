@@ -10,15 +10,10 @@ Everything is set in the repository's `config.yaml`: agent limits, the
 `vox_relay` and `jev_bridge` sections, and `sandbox.environment` (the relay and
 bridge URLs the skill scripts use). The proxy config is `runpod-nginx.conf`.
 
-Secrets are the only thing outside git. They live in `.deployment/` at the
-repository root:
-
-| File | Used by |
-| --- | --- |
-| `vox-api-key` | Vox relay |
-| `jev-gateway-key` | Jev bridge |
-| `codex-auth.json` | Gateway models (copied to `~/.codex/auth.json`) |
-| `jev-gateway.env`, `opencode-go.env` | Jev gateway |
+Secrets are the only thing outside git, and all of them are in the single
+repository-root `.env`: `VOX_API_KEY` (Vox relay), `JEV_GATEWAY_API_KEY` (Jev
+bridge and gateway) and the Jev gateway's provider keys. The Codex login is the
+service user's `~/.codex/auth.json`.
 
 The lead and depth prompts tell agents to write only inside their assigned
 virtual thread folder. Bash command text is not scanned for file paths. Virtual

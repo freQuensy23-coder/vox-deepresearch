@@ -1,12 +1,11 @@
 """Start the research services natively on the RunPod host.
 
-All service settings come from the repository's config.yaml. Secrets live in
-`.deployment/` next to it (never committed).
+All service settings come from the repository's config.yaml and all secrets
+from its .env. The Codex login lives in the service user's ~/.codex/auth.json.
 """
 
 import json
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -36,16 +35,6 @@ if not Path("/usr/local/bin/python3.12").exists():
     Path("/usr/local/bin/python3.12").symlink_to(native / "usr/local/bin/python3.12")
 link(source / "backend/.deer-flow", source / "runtime")
 
-codex_dir = home / ".codex"
-codex_dir.mkdir(exist_ok=True)
-os.chown(codex_dir, GATEWAY_UID, GATEWAY_UID)
-credential = codex_dir / "auth.json"
-staged = codex_dir / "auth.json.deploy"
-shutil.copyfile(source / ".deployment/codex-auth.json", staged)
-os.chown(staged, GATEWAY_UID, GATEWAY_UID)
-os.chmod(staged, 0o600)
-os.replace(staged, credential)
-
 python = app / "backend/.venv/bin/python"
 env = {
     "PATH": f"{native}/usr/bin:{app}/backend/.venv/bin:/usr/local/bin:/usr/bin:/bin",
@@ -72,11 +61,10 @@ def drop_to_gateway_user():
 
 jev_gateway_env = dict(env, JEV_GATEWAY_DATABASE=str(home / "jev-gateway.sqlite3"))
 jev_gateway_env["PYTHONPATH"] = f"{base}/home/private/jev-gateway:{env['PYTHONPATH']}"
-for filename in ("jev-gateway.env", "opencode-go.env"):
-    for line in (source / ".deployment" / filename).read_text(encoding="utf-8").splitlines():
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            jev_gateway_env[key] = value.strip().strip('"').strip("'")
+for line in (source / ".env").read_text(encoding="utf-8").splitlines():
+    if line and not line.startswith("#") and "=" in line:
+        key, value = line.split("=", 1)
+        jev_gateway_env[key.strip()] = value.strip().strip('"').strip("'")
 
 services = {
     "vox-relay": ([str(python), "local-deploy/vox_adaptive_relay.py"], source, env, None),

@@ -1907,19 +1907,17 @@ sandbox:
 # Process-wide execution capacity. These fields are restart-required and are
 # shared by ordinary `task` calls and durable batches. Waiting work is async;
 # queued subagents do not occupy a scheduler thread.
-# Vox relay (local-deploy/vox_adaptive_relay.py): holds the Vox key and admits
-# search load adaptively. Paths are relative to the repository root.
+# Vox relay (local-deploy/vox_adaptive_relay.py): holds VOX_API_KEY from .env and
+# admits search load adaptively. Paths are relative to the repository root.
 vox_relay:
   port: 8083
-  key_file: .deployment/vox-api-key
   state_dir: backend/.deer-flow/vox-relay
 
-# Jev bridge (local-deploy/jev_bridge.py): holds the Jev gateway key and forwards
+# Jev bridge (local-deploy/jev_bridge.py): holds JEV_GATEWAY_API_KEY from .env and forwards
 # validated requests from skill scripts to the Jev gateway.
 jev_bridge:
   port: 8084
   gateway_url: http://127.0.0.1:18791
-  key_file: .deployment/jev-gateway-key
 
 subagent_runtime:
   max_running: 32

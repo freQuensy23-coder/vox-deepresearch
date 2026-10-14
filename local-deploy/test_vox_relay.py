@@ -141,7 +141,7 @@ def relays(tmp_path, upstream):
         options.update(overrides)
         server = module.RelayServer(
             ("127.0.0.1", 0),
-            key_file=key,
+            key=key.read_text(),
             state_dir=tmp_path / "state",
             transport_factory=HTTPTransport,
             **options,
@@ -373,7 +373,7 @@ def test_process_restart_preserves_retry_after(tmp_path, upstream):
         "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
         "T=type('T',(m.HTTPSUpstream,),{'__init__':lambda self,timeout:"
         f"setattr(self,'connection',http.client.HTTPConnection({upstream.address[0]!r},{upstream.address[1]},timeout=timeout))}});"
-        f"v=m.RelayServer(('127.0.0.1',0),key_file={str(key)!r},state_dir={str(state_dir)!r},"
+        f"v=m.RelayServer(('127.0.0.1',0),key={key.read_text()!r},state_dir={str(state_dir)!r},"
         "transport_factory=T,spacing=.05,cooldown=.12,queue_wait=2.5,request_deadline=3,socket_idle=2);"
         "print(v.server_port,flush=True);v.serve_forever()"
     )

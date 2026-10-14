@@ -84,4 +84,3 @@ backend/sandbox/
 !backend/extensions/
 !backend/extensions/sources/
 !backend/extensions/sources/**
-.deployment/

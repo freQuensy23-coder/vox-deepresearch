@@ -179,7 +179,7 @@ def test_two_processes_share_five_slots_and_release_on_death(tmp_path, upstream)
         'm=importlib.util.module_from_spec(s);s.loader.exec_module(m);'
         'T=type("T",(m.HTTPSUpstream,),{"__init__":lambda self,timeout:'
         f'setattr(self,"connection",http.client.HTTPConnection({upstream.address[0]!r},{upstream.address[1]},timeout=timeout))}});'
-        f'v=m.RelayServer(("127.0.0.1",0),key_file={str(key)!r},state_dir={str(tmp_path/"state")!r},'
+        f'v=m.RelayServer(("127.0.0.1",0),key={key.read_text()!r},state_dir={str(tmp_path/"state")!r},'
         'transport_factory=T,spacing=.25,max_inflight=5,queue_wait=4,request_deadline=6,socket_idle=6);'
         'print(v.server_port,flush=True);v.serve_forever()'
     )

@@ -61,7 +61,7 @@ class AdaptiveRelayServer(RelayServer):
         self,
         address,
         *,
-        key_file,
+        key,
         state_dir,
         transport_factory=HTTPSUpstream,
         gate_options=None,
@@ -81,11 +81,10 @@ class AdaptiveRelayServer(RelayServer):
             or self.options["max_clients"] > 4096
         ):
             raise ValueError("invalid client limit")
-        with Path(key_file).open("rb") as handle:
-            key = handle.read(4097).strip()
-        if not key or len(key) > 4096 or any(c <= 32 or c >= 127 for c in key):
+        key = key.strip()
+        if not key or len(key) > 4096 or any(ord(c) <= 32 or ord(c) >= 127 for c in key):
             raise ValueError("invalid relay key")
-        self.key = key.decode("ascii")
+        self.key = key
         self.state_dir = Path(state_dir)
         self.gate = AdaptiveGate(self.state_dir, **(gate_options or {}))
         self.transport_factory = transport_factory
@@ -285,7 +284,7 @@ def main():
     config = deploy_config.section("vox_relay")
     server = AdaptiveRelayServer(
         ("127.0.0.1", int(config["port"])),
-        key_file=str(deploy_config.path(config["key_file"])),
+        key=deploy_config.secret("VOX_API_KEY"),
         state_dir=str(deploy_config.path(config["state_dir"])),
     )
     try:

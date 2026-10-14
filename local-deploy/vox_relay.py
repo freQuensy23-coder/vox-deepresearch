@@ -487,7 +487,7 @@ class RelayServer(ThreadingHTTPServer):
     block_on_close = True
     request_queue_size = 16
 
-    def __init__(self, address, *, key_file, state_dir, transport_factory=HTTPSUpstream, **options):
+    def __init__(self, address, *, key, state_dir, transport_factory=HTTPSUpstream, **options):
         self.options = DEFAULTS | options
         if set(self.options) != set(DEFAULTS):
             raise ValueError("unknown option")
@@ -495,11 +495,10 @@ class RelayServer(ThreadingHTTPServer):
             raise ValueError("invalid limit")
         if type(self.options["max_clients"]) is not int or self.options["max_clients"] > 16:
             raise ValueError("invalid client limit")
-        with Path(key_file).open("rb") as handle:
-            key = handle.read(4097).strip()
-        if not key or len(key) > 4096 or any(c <= 32 or c >= 127 for c in key):
+        key = key.strip()
+        if not key or len(key) > 4096 or any(ord(c) <= 32 or ord(c) >= 127 for c in key):
             raise ValueError("invalid relay key")
-        self.key = key.decode("ascii")
+        self.key = key
         self.state_dir = Path(state_dir)
         self.gate = Gate(self.state_dir, self.options["spacing"], self.options["cooldown"], self.options["backoff_cap"],
                          self.options["max_inflight"])

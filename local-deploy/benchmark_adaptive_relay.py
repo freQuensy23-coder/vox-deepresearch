@@ -253,7 +253,7 @@ def run_one(module, variant, output):
     )
     relay = server_class(
         ("127.0.0.1", 0),
-        key_file=key,
+        key=key.read_text(),
         state_dir=output / "state",
         transport_factory=transport_factory(upstream.server_address),
         **options,
