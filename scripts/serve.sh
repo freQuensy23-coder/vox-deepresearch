@@ -263,7 +263,7 @@ stop_all() {
     echo "Stopping all services..."
     _report_reclaimed_ports
     _kill_repo_processes "uvicorn app.gateway.app:app"
-    _kill_repo_processes "local-deploy/vox_adaptive_relay.py"
+    _kill_repo_processes "local-deploy/vox_relay.py"
     _kill_repo_processes "local-deploy/jev_bridge.py"
     _kill_repo_processes "python -m jev_gateway"
     _kill_repo_processes "next dev"
@@ -501,7 +501,7 @@ _config_port() {
     (cd backend && uv run --no-sync python -c "import yaml; print(yaml.safe_load(open('../config.yaml'))['$1']['port'])")
 }
 run_service "Vox relay" \
-    "cd backend && uv run --no-sync python ../local-deploy/vox_adaptive_relay.py > ../logs/vox-relay.log 2>&1" \
+    "cd backend && uv run --no-sync python ../local-deploy/vox_relay.py > ../logs/vox-relay.log 2>&1" \
     "$(_config_port vox_relay)" 30
 run_service "Jev gateway" \
     "cd jev-gateway && ../backend/.venv/bin/python -m jev_gateway > ../logs/jev-gateway.log 2>&1" \

@@ -24,7 +24,11 @@ Background commands return after at most 10 seconds if still running. Their
 handles remain available to the owning execution until its release; there is no
 additional cap of 64 commands.
 
-Vox's adaptive relay is described in [VOX_DYNAMIC_ADMISSION.md](VOX_DYNAMIC_ADMISSION.md).
+Vox uses one upstream request at a time behind a FIFO queue. Retries,
+`Retry-After`, and stream fallbacks are handled inside the proxy. Its
+`call_timeout` (50 s) applies to each individual HTTP call to Vox; queue and
+retry waits are outside that clock. Fast failures retry without an overall
+retry deadline. A call exceeding it advises reducing the date interval. See [the proxy contract](VOX_PROXY.md).
 
 The Jev client and bridge forward optional batch policy unchanged. Omitting it
 uses the gateway's own defaults; the research system adds no free-only policy,

@@ -1907,10 +1907,13 @@ sandbox:
 # Process-wide execution capacity. These fields are restart-required and are
 # shared by ordinary `task` calls and durable batches. Waiting work is async;
 # queued subagents do not occupy a scheduler thread.
-# Vox relay (local-deploy/vox_adaptive_relay.py): holds VOX_API_KEY from .env and
-# admits search load adaptively. Paths are relative to the repository root.
+# Vox proxy (local-deploy/vox_relay.py): holds VOX_API_KEY from .env, sends one
+# request to Vox at a time (FIFO), retries failures internally and returns only
+# complete responses. call_timeout bounds each single Vox call; on overrun the
+# agent gets a "reduce the date interval" error. Paths are relative to the repo root.
 vox_relay:
   port: 8083
+  call_timeout: 50
   state_dir: backend/.deer-flow/vox-relay
 
 # Jev bridge (local-deploy/jev_bridge.py): holds JEV_GATEWAY_API_KEY from .env and forwards

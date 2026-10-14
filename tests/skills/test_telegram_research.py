@@ -63,12 +63,20 @@ def test_search_resumes_from_checkpoint_after_failure(tmp_path, monkeypatch):
     assert [m["id"] for m in json.loads(out.read_text())["messages"]] == [5, 4, 3]
 
 
-def test_partial_search_continues_from_stopped_at(tmp_path, monkeypatch):
-    pages = [{"stop_reason": "timeout", "stopped_at": "2026-01-12T00:00:00Z", "messages": []}, {"stop_reason": "finished", "messages": [row(1, "2026-01-03T00:00:00Z")]}]
-    calls = []
-    monkeypatch.setattr(vox, "_call", lambda path, params: calls.append(params["to_date"]) or pages[len(calls) - 1])
-    vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01", out=str(tmp_path / "s.json"))
-    assert calls == ["2026-02-01T00:00:00Z", "2026-01-12T00:00:00Z"]
+def test_proxy_timeout_surfaces_its_advice(monkeypatch):
+    import io
+    import urllib.error
+
+    body = json.dumps({"error": "request_timeout", "message": "Request exceeded 50 seconds. Reduce the date interval and try again."}).encode()
+
+    class Opener:
+        def open(self, request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 504, "timeout", {}, io.BytesIO(body))
+
+    monkeypatch.setenv("VOX_RELAY_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(vox, "_OPENER", Opener())
+    with pytest.raises(vox.VoxError, match="Reduce the date interval"):
+        vox._call("/search/text", {"query": "вахта"})
 
 
 def test_download_unions_frequent_words_inside_group(tmp_path, monkeypatch):

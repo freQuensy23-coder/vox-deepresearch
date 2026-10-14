@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Vox CLI for Telegram research. The only way to reach Vox; every call goes
-through the Vox proxy at VOX_RELAY_URL, which owns rate limiting.
+through the Vox proxy at VOX_RELAY_URL. The proxy sends one request to Vox at a
+time, retries failures itself and returns only complete results. If one Vox call
+runs past its time limit, the command fails with the proxy's advice to narrow
+the date interval; choosing smaller windows (--since/--until, separate --out)
+is the caller's decision.
 
 Each command saves JSON and prints its path. Commands that page through dates
 checkpoint after every page and resume from the same output file.
@@ -78,6 +82,12 @@ def _call(path, params=None):
                 raise VoxError(f"Search stream at {path} ended without a result; rerun to resume.")
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read(4096))
+        except (ValueError, OSError):
+            detail = {}
+        if exc.code == 504 and isinstance(detail, dict) and detail.get("error") == "request_timeout":
+            raise VoxError(detail["message"]) from None
         raise VoxError(f"HTTP {exc.code} at {path}.") from None
     except (urllib.error.URLError, OSError) as exc:
         raise VoxError(f"Network error ({type(exc).__name__}) at {path}; rerun to resume.") from None
@@ -139,16 +149,10 @@ def _traverse(state, out, query, include=None):
                 seen.add(key)
                 state["messages"].append(_message(row))
         state["pages"] += 1
-        timed_out = page.get("stop_reason") == "timeout"
-        if not timed_out and len(page["messages"]) < PAGE:
+        if len(page["messages"]) < PAGE:
             state["cursor"] = None
         else:
-            dates = [_date(r["date"]) for r in page["messages"] if r.get("date")]
-            if timed_out and page.get("stopped_at"):
-                dates.append(_date(page["stopped_at"]))
-            if not dates:
-                raise VoxError(f"Vox stopped ({page.get('stop_reason')}) with no date to continue from; rerun to resume.")
-            oldest = min(dates)
+            oldest = min(_date(r["date"]) for r in page["messages"] if r.get("date"))
             # The next page repeats the boundary second (rows are deduplicated, never skipped);
             # step past it only when a whole page shares that second.
             if _iso(oldest) == state["cursor"]:
