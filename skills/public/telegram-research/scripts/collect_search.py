@@ -12,6 +12,10 @@ from pathlib import Path
 from uuid import uuid4
 
 
+PROXY_TIMEOUT_MESSAGE = (
+    "Request exceeded 10 seconds. Reduce the date interval and try again."
+)
+
 SATURATION_LIMITATION = "Saturation uses the requested per-page limit; an undersized provider-finished response ends this indexed-query traversal."
 LEGACY_SATURATION_LIMITATION = "The OpenAPI description says cap 50 while its schema allows 10000; saturation conservatively uses min(limit, 50)."
 
@@ -359,6 +363,11 @@ def consume(state, messages, workspace):
                 status="error",
                 reason="Vox CLI failed; see the immutable stderr receipt. No collector retry was attempted.",
             )
+            if (
+                Path(page["stderr_path"]).read_text(encoding="utf-8").strip()
+                == "error: " + PROXY_TIMEOUT_MESSAGE
+            ):
+                state["reason"] = PROXY_TIMEOUT_MESSAGE
             checkpoint(state, messages, workspace)
             return False
     else:
@@ -650,6 +659,11 @@ def main(argv=None):
         path = workspace / "manifest.json"
         code = run_collection(args)
         if code:
+            if (
+                json.loads(path.read_text(encoding="utf-8")).get("reason")
+                == PROXY_TIMEOUT_MESSAGE
+            ):
+                print(PROXY_TIMEOUT_MESSAGE, file=sys.stderr)
             print(
                 "Collection is incomplete; inspect the manifest reason and remaining_window.",
                 file=sys.stderr,

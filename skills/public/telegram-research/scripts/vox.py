@@ -148,6 +148,15 @@ def call(path, params=None, method="GET"):
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:
+            if relay and exc.code == 504:
+                try:
+                    error = json.loads(exc.read(4096))
+                except (ValueError, UnicodeError, OSError):
+                    error = {}
+                if isinstance(error, dict) and error.get("error") == "request_timeout":
+                    raise VoxError(
+                        "Request exceeded 10 seconds. Reduce the date interval and try again."
+                    ) from None
             hints = {
                 401: "Check the supplied Vox credential.",
                 403: "The credential may lack this endpoint grant.",
@@ -456,6 +465,11 @@ def cmd_search(args):
     )
     print(path)
     if code:
+        if (
+            json.loads(manifest.read_text(encoding="utf-8")).get("reason")
+            == collector.PROXY_TIMEOUT_MESSAGE
+        ):
+            print(collector.PROXY_TIMEOUT_MESSAGE, file=sys.stderr)
         print(
             "Collection is incomplete; inspect status, reason and remaining_window in the manifest.",
             file=sys.stderr,

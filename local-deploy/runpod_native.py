@@ -135,7 +135,7 @@ for role in ["vox-relay", "gateway", "frontend"]:
             ]:
                 value = value.replace(old, new)
             env[key] = value
-        command = [str(python), str(source / "local-deploy/vox_adaptive_relay.py")]
+        command = [str(python), str(source / "local-deploy/vox_relay.py")]
         cwd = source / "local-deploy"
     with (logs / f"{role}.log").open("ab") as output:
 

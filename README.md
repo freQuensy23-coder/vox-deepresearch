@@ -62,12 +62,12 @@ Example request:
 record the live runs and what they do and do not demonstrate. Local credentials
 and raw research outputs are not included in this repository.
 
-An opt-in [dynamic Vox relay](local-deploy/VOX_DYNAMIC_ADMISSION.md) adjusts
-concurrency from observed latency and errors. It was enabled on `openclaw-dp`
-on 13 October 2026 with managed background commands and the increased relay deadlines. [Real Vox measurements](local-deploy/evals/dynamic-admission-live-2026-10-12.md)
-record the observed speed improvement and its limits separately from synthetic tests.
-After a capacity reduction, calibration uses the available concurrency rather
-than waiting for the original five-request cohort to complete serially.
+The [Vox proxy](local-deploy/VOX_DYNAMIC_ADMISSION.md) executes one upstream
+request at a time behind a FIFO queue. It handles upstream failures, retries,
+`Retry-After`, and incomplete-stream fallbacks internally, returning only a
+complete successful response. Each admitted request has a total 10-second
+budget; expiry returns the proxy's own error advising a smaller date interval.
+Queue waiting does not consume that budget.
 
 Long Vox commands use managed `bash(background=True)`: completed commands return
 within ten seconds; longer commands return a session ID and continue while the

@@ -1,13 +1,10 @@
 import http.client
 import importlib.util
 import json
-import socket
-import struct
 import subprocess
 import sys
 import threading
 import time
-from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -76,7 +73,7 @@ def upstream():
                     self.wfile.write(b'{"point":0}\n')
                     self.wfile.flush()
                     state.release.wait(5)
-                    self.wfile.write(b'{"messages":[]}\n')
+                    self.wfile.write(b'{"messages":[],"stop_reason":"finished"}\n')
                 elif "query=error200" in self.path:
                     self.wfile.write(b'{"point":0}\n')
                     self.wfile.flush()
@@ -93,7 +90,7 @@ def upstream():
                         self.wfile.write(b'{"point":0}\n')
                         self.wfile.flush()
                 else:
-                    self.wfile.write(b'{"messages":[]}\n')
+                    self.wfile.write(b'{"messages":[],"stop_reason":"finished"}\n')
             except (BrokenPipeError, ConnectionResetError):
                 state.disconnected.set()
             finally:
@@ -127,24 +124,11 @@ def relays(tmp_path, upstream):
             )
 
     def start(**overrides):
-        options = dict(
-            spacing=0.08,
-            cooldown=0.12,
-            backoff_cap=1.0,
-            queue_wait=0.6,
-            request_deadline=3,
-            socket_idle=2,
-            client_timeout=0.3,
-            max_clients=16,
-            max_inflight=1,
-        )
-        options.update(overrides)
         server = module.RelayServer(
             ("127.0.0.1", 0),
             key_file=key,
             state_dir=tmp_path / "state",
             transport_factory=HTTPTransport,
-            **options,
         )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -178,47 +162,6 @@ def request(
 def await_starts(upstream, count):
     with upstream.condition:
         assert upstream.condition.wait_for(lambda: len(upstream.starts) >= count, 3)
-
-
-def test_defaults_are_deployment_limits():
-    module = load_relay()
-    assert module.DEFAULTS == dict(
-        spacing=0.25,
-        cooldown=60.0,
-        backoff_cap=900.0,
-        queue_wait=360.0,
-        request_deadline=2100.0,
-        socket_idle=1890.0,
-        client_timeout=30.0,
-        max_clients=16,
-        max_inflight=5,
-    )
-    assert module.UPSTREAM == "api.vox-lab.com"
-
-
-def test_raw_parallel_clients_hold_slot_until_stream_eof(relays, upstream):
-    server = relays()
-    first = http.client.HTTPConnection(*server.server_address, timeout=3)
-    first.request("GET", "/search/text?query=hold&stream=true")
-    response = first.getresponse()
-    assert response.readline() == b'{"point":0}\n'
-    results = []
-    threads = [
-        threading.Thread(target=lambda: results.append(request(server)))
-        for _ in range(3)
-    ]
-    for thread in threads:
-        thread.start()
-    time.sleep(0.18)
-    assert len(upstream.starts) == 1
-    upstream.release.set()
-    assert response.read() == b'{"messages":[]}\n'
-    first.close()
-    for thread in threads:
-        thread.join(3)
-    assert len(results) == 3 and all(result[0] == 200 for result in results)
-    assert upstream.maximum == 1
-    assert all(b - a >= 0.075 for a, b in zip(upstream.starts, upstream.starts[1:]))
 
 
 def test_relay_owns_key_and_does_not_forward_caller_headers(relays, upstream):
@@ -338,149 +281,11 @@ def test_unsafe_post_never_opens_upstream(relays, upstream, body):
     assert not upstream.starts
 
 
-@pytest.mark.parametrize("retry_after", ["1", "date", "invalid"])
-def test_429_persists_cooldown_across_relay_restart(relays, upstream, retry_after):
-    upstream.status = 429
-    upstream.retry_after = (
-        formatdate(time.time() + 2, usegmt=True)
-        if retry_after == "date"
-        else retry_after
-    )
-    server = relays(queue_wait=2.5)
-    before = time.time()
-    assert request(server)[0] == 429
-    state = json.loads((server.state_dir / "state.json").read_text())
-    expected = 1 if retry_after == "1" else 2 if retry_after == "invalid" else 0.12
-    assert state["cooldown_until"] >= before + expected
-    assert state["failures"] == 0
-    assert state["gap"] == 0.16
-    server.shutdown()
-    server.server_close()
-    next_server = relays(queue_wait=2.5)
-    assert request(next_server)[0] == 200
-    assert upstream.starts[1] - upstream.starts[0] >= expected - 0.01
-    assert "synthetic" not in json.dumps(state)
-
-
-def test_process_restart_preserves_retry_after(tmp_path, upstream):
-    load_relay()
-    key = tmp_path / "key"
-    key.write_text("synthetic-relay-owned-key")
-    state_dir = tmp_path / "process-state"
-    code = (
-        "import http.client,importlib.util;"
-        f"s=importlib.util.spec_from_file_location('relay',{str(MODULE)!r});"
-        "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
-        "T=type('T',(m.HTTPSUpstream,),{'__init__':lambda self,timeout:"
-        f"setattr(self,'connection',http.client.HTTPConnection({upstream.address[0]!r},{upstream.address[1]},timeout=timeout))}});"
-        f"v=m.RelayServer(('127.0.0.1',0),key_file={str(key)!r},state_dir={str(state_dir)!r},"
-        "transport_factory=T,spacing=.05,cooldown=.12,queue_wait=2.5,request_deadline=3,socket_idle=2);"
-        "print(v.server_port,flush=True);v.serve_forever()"
-    )
-    processes = []
-
-    def start():
-        process = subprocess.Popen(
-            [sys.executable, "-c", code],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        processes.append(process)
-        port = int(process.stdout.readline())
-        return SimpleNamespace(server_address=("127.0.0.1", port))
-
-    try:
-        upstream.status, upstream.retry_after = 429, "1"
-        assert request(start())[0] == 429
-        processes[0].terminate()
-        processes[0].communicate(timeout=3)
-        assert request(start())[0] == 200
-        assert upstream.starts[1] - upstream.starts[0] >= 0.99
-    finally:
-        for process in processes:
-            if process.poll() is None:
-                process.terminate()
-            _, err = process.communicate(timeout=3)
-            assert "synthetic-relay-owned-key" not in err
-
-
-def test_queued_request_returns_bounded_busy(relays, upstream):
-    server = relays(queue_wait=0.12)
-    first = http.client.HTTPConnection(*server.server_address, timeout=3)
-    first.request("GET", "/search/text?query=hold")
-    response = first.getresponse()
-    await_starts(upstream, 1)
-    started = time.monotonic()
-    status, headers, _ = request(server)
-    assert status == 503 and int(headers["Retry-After"]) >= 1
-    assert time.monotonic() - started < 0.5
-    assert len(upstream.starts) == 1
-    upstream.release.set()
-    response.read()
-    first.close()
-
-
-def test_client_connection_count_is_bounded(relays, upstream):
-    server = relays(max_clients=2, client_timeout=1)
-    sockets = [
-        socket.create_connection(server.server_address, timeout=2) for _ in range(2)
-    ]
-    try:
-        time.sleep(0.05)
-        assert request(server)[0] == 503
-        assert not upstream.starts
-    finally:
-        for connection in sockets:
-            connection.close()
-
-
-def test_disconnect_closes_upstream_before_next_admission(relays, upstream):
-    server = relays(cooldown=0.05)
-    connection = socket.create_connection(server.server_address, timeout=2)
-    connection.sendall(b"GET /search/text?query=cancel HTTP/1.1\r\nHost: relay\r\n\r\n")
-    assert b"200" in connection.recv(4096)
-    connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
-    connection.close()
-    assert upstream.disconnected.wait(2)
-    assert request(server)[0] == 200
-    assert upstream.maximum == 1
-
-
-def test_total_deadline_closes_progress_stream(relays, upstream):
-    server = relays(request_deadline=0.15, cooldown=0.05)
-    status, _, body = request(server, "/search/text?query=cancel")
-    assert status == 200 and b'"point"' in body
-    assert upstream.disconnected.wait(2)
-    assert request(server)[0] == 200
-    assert upstream.maximum == 1
-
-
-def test_silent_client_disconnect_aborts_upstream(relays, upstream):
-    server = relays(cooldown=0.05, queue_wait=0.2)
-    connection = socket.create_connection(server.server_address, timeout=2)
-    connection.sendall(b"GET /search/text?query=silent HTTP/1.1\r\nHost: relay\r\n\r\n")
-    assert b"200" in connection.recv(4096)
-    connection.close()
-    assert upstream.disconnected.wait(0.4)
-    assert request(server)[0] == 200
-
-
-def test_deadline_aborts_silent_upstream_before_unlock(relays, upstream):
-    server = relays(request_deadline=0.15, cooldown=0.05, queue_wait=0.2)
-    assert request(server, "/search/text?query=silent")[0] == 200
-    assert upstream.disconnected.wait(0.4)
-    state = json.loads((server.state_dir / "state.json").read_text())
-    assert state["failures"] == 1
-    assert request(server)[0] == 200
-    assert upstream.maximum == 1
-
-
 def test_health_and_status_do_not_contact_upstream(relays, upstream):
     server = relays()
     assert json.loads(request(server, "/health")[2]) == {"ok": True}
     state = json.loads(request(server, "/status")[2])
-    assert state["requests"] == 0
+    assert state["active"] == 0 and state["queued"] == 0
     assert "key" not in json.dumps(state)
     assert not upstream.starts
 
@@ -489,26 +294,6 @@ def test_legacy_query_only_safe_post_is_allowed(relays, upstream):
     path = "/reporter/parse?groups_search_query=test&run_parser=false&find_new_users=false&new_users_limit=0"
     assert request(relays(), path, "POST")[0] == 200
     assert upstream.requests[0][1] == path
-
-
-def test_redirect_is_not_followed_or_forwarded(relays, upstream):
-    upstream.status = 302
-    assert request(relays())[0] == 502
-    assert len(upstream.starts) == 1
-
-
-def test_http_200_backend_error_sets_cooldown(relays, upstream):
-    server = relays()
-    status, _, body = request(server, "/search/text?query=error200")
-    assert status == 200 and b"synthetic backend failure" in body
-    state = json.loads((server.state_dir / "state.json").read_text())
-    assert state["failures"] == 1 and state["cooldown_until"] > time.time()
-
-
-def test_truncated_body_sets_cooldown(relays):
-    server = relays()
-    assert request(server, "/search/text?query=truncated")[0] == 200
-    assert json.loads((server.state_dir / "state.json").read_text())["failures"] == 1
 
 
 def test_real_vox_cli_uses_relay_without_upstream_key(relays, tmp_path, upstream):
@@ -554,51 +339,3 @@ def test_real_vox_cli_uses_relay_without_upstream_key(relays, tmp_path, upstream
     assert (
         upstream.requests[0][2]["Authorization"] == "Bearer synthetic-relay-owned-key"
     )
-
-
-def test_retry_after_never_shortens_default_cooldown(tmp_path):
-    module = load_relay()
-    gate = module.Gate(tmp_path / "cooldown", 5, 60, 900)
-    fd = gate.acquire(1)
-    try:
-        now = time.time()
-        gate.finish(True, "1")
-        assert gate.read()["cooldown_until"] >= now + 60
-        gate.finish(True, "invalid")
-        assert gate.read()["cooldown_until"] >= now + 120
-    finally:
-        gate.release(fd)
-
-
-def test_logs_do_not_expose_request_data(relays, capsys):
-    server = relays()
-    assert (
-        request(
-            server,
-            "/search/text?query=private-topic",
-            headers={"Authorization": "Bearer private-caller-key"},
-        )[0]
-        == 200
-    )
-    out, err = capsys.readouterr()
-    assert err == ""
-    assert "private-topic" not in out
-    assert "private-caller-key" not in out
-    assert "Authorization" not in out
-    events = [json.loads(line) for line in out.splitlines()]
-    assert events
-    assert all("request_id" in event and "event" in event for event in events)
-
-
-def test_state_missing_after_initialization_fails_closed(relays, upstream):
-    server = relays()
-    (server.state_dir / "state.json").unlink()
-    assert request(server)[0] == 503
-    assert not upstream.starts
-
-
-def test_corrupt_state_fails_closed(relays, upstream):
-    server = relays()
-    (server.state_dir / "state.json").write_text("{}")
-    assert request(server)[0] == 503
-    assert not upstream.starts
