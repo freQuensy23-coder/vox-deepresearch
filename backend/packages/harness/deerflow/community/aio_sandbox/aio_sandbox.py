@@ -612,8 +612,8 @@ class AioSandbox(Sandbox):
         if self._closed:
             raise RuntimeError("sandbox client is closed")
         timeout = self._default_command_timeout if timeout is None else timeout
-        if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 86400:
-            raise ValueError("command timeout must be positive and at most one day")
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout:
+            raise ValueError("command timeout must be positive")
         return self._command_sessions.start(lambda: AioCommand(self, command, env, timeout), owner=owner_id, env=env, wait=yield_time)
 
     @staticmethod

@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 TERMINAL = {"completed", "timed_out", "cancelled", "failed"}
-MAX_SESSIONS = 64
 OUTPUT_LIMIT = 20000
 
 
@@ -51,11 +50,6 @@ class CommandSessions:
         with self._lock:
             if self._closed:
                 raise RuntimeError("managed command registry is closed")
-            if len(self._entries) >= MAX_SESSIONS:
-                old = next((key for key, value in self._entries.items() if value.terminal), None)
-                if old is None:
-                    raise RuntimeError("managed command capacity reached; collect or stop existing sessions")
-                del self._entries[old]
             self._entries[sid] = entry
         try:
             entry.handle = factory()

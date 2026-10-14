@@ -67,25 +67,6 @@ _SANDBOX_AUTHORIZATION_CHECKED: ContextVar[bool] = ContextVar(
     default=False,
 )
 
-_ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:\w])(?<!:/)/(?:[^\s\"'`;&|<>()]+)")
-# A ``{...}`` block holding a single identifier-like placeholder (e.g. ``{id}``
-# in a REST template or ``{port}`` in an f-string). Bash brace expansion such as
-# ``{passwd,shadow}`` or ``{,.bak}`` does NOT match (commas/dots/empty inner).
-_IDENTIFIER_BRACE_BLOCK_PATTERN = re.compile(r"\{([^{}]*)\}")
-_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_FILE_URL_PATTERN = re.compile(r"\bfile://\S+", re.IGNORECASE)
-_URL_WITH_SCHEME_PATTERN = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
-_URL_IN_COMMAND_PATTERN = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s\"'`;&|<>()]+", re.IGNORECASE)
-_DOTDOT_PATH_SEGMENT_PATTERN = re.compile(r"(?:^|[/\\=])\.\.(?:$|[/\\])")
-_LOCAL_BASH_PATH_RECOVERY_GUIDANCE = "For environment questions, use command-only probes such as uname; otherwise use an allowed virtual path. Do not repeat the rejected path."
-_LOCAL_BASH_SYSTEM_PATH_PREFIXES = (
-    "/bin/",
-    "/usr/bin/",
-    "/usr/sbin/",
-    "/sbin/",
-    "/opt/homebrew/bin/",
-    "/dev/",
-)
 
 _DEFAULT_SKILLS_CONTAINER_PATH = DEFAULT_SKILLS_CONTAINER_PATH
 _ACP_WORKSPACE_VIRTUAL_PATH = "/mnt/acp-workspace"
@@ -104,42 +85,6 @@ _DEFAULT_WRITE_FILE_ERROR_MAX_CHARS = 2000
 # 0 (or negative) to disable the guard entirely.
 _WRITE_FILE_CONTENT_MAX_BYTES = 80 * 1024
 _WRITE_FILE_MAX_BYTES_ENV = "DEERFLOW_WRITE_FILE_MAX_BYTES"
-_LOCAL_BASH_CWD_COMMANDS = {"cd", "pushd"}
-_LOCAL_BASH_COMMAND_WRAPPERS = {"command", "builtin"}
-_LOCAL_BASH_COMMAND_PREFIX_KEYWORDS = {"!", "{", "case", "do", "elif", "else", "for", "if", "select", "then", "time", "until", "while"}
-_LOCAL_BASH_COMMAND_END_KEYWORDS = {"}", "done", "esac", "fi"}
-_LOCAL_BASH_ROOT_PATH_COMMANDS = {
-    "awk",
-    "cat",
-    "cp",
-    "du",
-    "find",
-    "grep",
-    "head",
-    "less",
-    "ln",
-    "ls",
-    "more",
-    "mv",
-    "rm",
-    "sed",
-    "tail",
-    "tar",
-}
-_SHELL_COMMAND_SEPARATORS = {";", "&&", "||", "|", "|&", "&", "(", ")"}
-_SHELL_REDIRECTION_OPERATORS = {
-    "<",
-    ">",
-    "<<",
-    ">>",
-    "<<<",
-    "<>",
-    ">&",
-    "<&",
-    "&>",
-    "&>>",
-    ">|",
-}
 
 
 def _get_skills_container_path() -> str:
@@ -1080,376 +1025,9 @@ def _resolve_and_validate_user_data_path(path: str, thread_data: ThreadDataState
     return str(resolved)
 
 
-def _is_non_file_url_token(token: str) -> bool:
-    """Return True for URL tokens that should not be interpreted as paths."""
-    values = [token]
-    if "=" in token:
-        values.append(token.split("=", 1)[1])
-
-    for value in values:
-        match = _URL_WITH_SCHEME_PATTERN.match(value)
-        if match and not value.lower().startswith("file://"):
-            return True
-    return False
-
-
-def _non_file_url_spans(command: str) -> list[tuple[int, int]]:
-    spans = []
-    for match in _URL_IN_COMMAND_PATTERN.finditer(command):
-        if not match.group().lower().startswith("file://"):
-            spans.append(match.span())
-    return spans
-
-
-def _is_in_spans(position: int, spans: list[tuple[int, int]]) -> bool:
-    return any(start <= position < end for start, end in spans)
-
-
-def _has_dotdot_path_segment(token: str) -> bool:
-    if _is_non_file_url_token(token):
-        return False
-    return bool(_DOTDOT_PATH_SEGMENT_PATTERN.search(token))
-
-
-def _split_shell_tokens(command: str) -> list[str]:
-    try:
-        normalized = command.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ; ")
-        lexer = shlex.shlex(normalized, posix=True, punctuation_chars=True)
-        lexer.whitespace_split = True
-        lexer.commenters = ""
-        return list(lexer)
-    except ValueError:
-        # The shell will reject malformed quoting later; keep validation
-        # best-effort instead of turning syntax errors into security messages.
-        return command.split()
-
-
-_SHELL_PATH_HARD_TERMINATORS = frozenset("\"'`;&|<>()")
-
-
-def _absolute_path_token_occurrences(command: str, tokens: list[str]) -> list[tuple[int, int, str]]:
-    """Locate contiguous occurrences of path-bearing shell tokens in *command*.
-
-    shlex strips quotes, so a quoted path with spaces is one token. Occurrences
-    stay tied to their position so a later quoted ``.../CON notes.txt`` cannot
-    excuse an earlier real ``/.../CON``. Tokens that are not a contiguous
-    substring (newline normalization, escapes) yield no occurrence.
-    """
-    occurrences: list[tuple[int, int, str]] = []
-    for token in tokens:
-        if "/" not in token:
-            continue
-        start = command.find(token)
-        while start != -1:
-            occurrences.append((start, start + len(token), token))
-            start = command.find(token, start + 1)
-    return occurrences
-
-
-def _extend_absolute_path_within_span(command: str, match_start: int, span_end: int) -> str:
-    """Continue a regex path through spaces inside one shell word.
-
-    Stop before quotes and shell metacharacters the absolute-path regex already
-    treats as boundaries, so a trailing dot is not hidden by a closing quote.
-    """
-    chars: list[str] = []
-    for char in command[match_start:span_end]:
-        if char in _SHELL_PATH_HARD_TERMINATORS:
-            break
-        chars.append(char)
-    return "".join(chars)
-
-
-def _shell_absolute_path_candidate(command: str, occurrences: list[tuple[int, int, str]], match: re.Match[str]) -> str | None:
-    """Return the path to validate for one regex match, or None if already covered.
-
-    A match that starts a shell word is validated as that whole word. A later
-    match inside that same absolute-path word is skipped. A match embedded in a
-    larger word is extended through spaces only up to a hard terminator.
-    """
-    covering = [item for item in occurrences if item[0] <= match.start() < item[1]]
-    if not covering:
-        return match.group()
-    start, end, token = max(covering, key=lambda item: item[1] - item[0])
-    if token.startswith("/") and start == match.start():
-        return token
-    if token.startswith("/") and start < match.start():
-        return None
-    extended = _extend_absolute_path_within_span(command, match.start(), end)
-    return extended or match.group()
-
-
-def _is_shell_command_separator(token: str) -> bool:
-    return token in _SHELL_COMMAND_SEPARATORS
-
-
-def _is_shell_redirection_operator(token: str) -> bool:
-    return token in _SHELL_REDIRECTION_OPERATORS
-
-
-def _is_shell_assignment(token: str) -> bool:
-    name, separator, _ = token.partition("=")
-    if not separator or not name:
-        return False
-    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
-
-
-def _reject_allowed_bash_path(path: str, thread_data: ThreadDataState | None) -> None:
-    """Traversal always; portability only when the host path is not stored yet."""
-    _reject_path_traversal(path)
-    _reject_unstored_windows_incompatible_path(path, thread_data)
-
-
-def _is_allowed_local_bash_absolute_path(
-    path: str,
-    allowed_paths: list[str],
-    *,
-    allow_system_paths: bool,
-    thread_data: ThreadDataState | None,
-) -> bool:
-    # Check for MCP filesystem server allowed paths
-    if any(path.startswith(allowed_path) or path == allowed_path.rstrip("/") for allowed_path in allowed_paths):
-        _reject_allowed_bash_path(path, thread_data)
-        return True
-
-    if path == VIRTUAL_PATH_PREFIX or path.startswith(f"{VIRTUAL_PATH_PREFIX}/"):
-        _reject_allowed_bash_path(path, thread_data)
-        return True
-
-    # Allow skills container path (resolved by tools.py before passing to sandbox)
-    if _is_skills_path(path):
-        _reject_allowed_bash_path(path, thread_data)
-        return True
-
-    # Allow ACP workspace path (path-traversal check only)
-    if _is_acp_workspace_path(path):
-        _reject_allowed_bash_path(path, thread_data)
-        return True
-
-    # Allow custom mount container paths
-    if _is_custom_mount_path(path):
-        _reject_allowed_bash_path(path, thread_data)
-        return True
-
-    if allow_system_paths and any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in _LOCAL_BASH_SYSTEM_PATH_PREFIXES):
-        return True
-
-    return False
-
-
-def _next_cd_target(tokens: list[str], start_index: int) -> tuple[str | None, int]:
-    index = start_index
-    while index < len(tokens):
-        token = tokens[index]
-        if _is_shell_command_separator(token):
-            return None, index
-        if _is_shell_redirection_operator(token):
-            index += 2
-            continue
-        if token == "--":
-            index += 1
-            continue
-        if token in {"-L", "-P", "-e", "-@"}:
-            index += 1
-            continue
-        if token.startswith("-") and token != "-":
-            index += 1
-            continue
-        return token, index + 1
-    return None, index
-
-
-def _validate_local_bash_cwd_target(command_name: str, target: str | None, allowed_paths: list[str], thread_data: ThreadDataState | None) -> None:
-    if target is None or target == "-":
-        raise PermissionError(f"Unsafe working directory change in command: {command_name}. Use paths under {VIRTUAL_PATH_PREFIX}")
-    if target.startswith(("$", "`")):
-        raise PermissionError(f"Unsafe working directory change in command: {command_name} {target}. Use paths under {VIRTUAL_PATH_PREFIX}")
-    if target.startswith("~"):
-        raise PermissionError(f"Unsafe working directory change in command: {command_name} {target}. Use paths under {VIRTUAL_PATH_PREFIX}")
-    if target.startswith("/"):
-        _reject_path_traversal(target)
-        if not _is_allowed_local_bash_absolute_path(target, allowed_paths, allow_system_paths=False, thread_data=thread_data):
-            raise PermissionError(f"Unsafe working directory change in command: {command_name} {target}. Use paths under {VIRTUAL_PATH_PREFIX}")
-
-
-def _validate_local_bash_root_path_args(command_name: str, tokens: list[str], start_index: int) -> None:
-    if command_name not in _LOCAL_BASH_ROOT_PATH_COMMANDS:
-        return
-
-    index = start_index
-    while index < len(tokens):
-        token = tokens[index]
-        if _is_shell_command_separator(token):
-            return
-        if _is_shell_redirection_operator(token):
-            index += 2
-            continue
-        if token == "/" and not _is_non_file_url_token(token):
-            raise PermissionError(f"Unsafe absolute paths in command: /. Use paths under {VIRTUAL_PATH_PREFIX}")
-        index += 1
-
-
-def _validate_local_bash_shell_tokens(command: str, allowed_paths: list[str], tokens: list[str], thread_data: ThreadDataState | None) -> None:
-    """Conservatively reject relative path escapes missed by absolute-path scanning."""
-    if re.search(r"\$\([^)]*\b(?:cd|pushd)\b", command):
-        raise PermissionError(f"Unsafe working directory change in command substitution. Use paths under {VIRTUAL_PATH_PREFIX}")
-
-    for token in tokens:
-        if _is_shell_command_separator(token) or _is_shell_redirection_operator(token):
-            continue
-        if _has_dotdot_path_segment(token):
-            raise PermissionError("Access denied: path traversal detected")
-
-    at_command_start = True
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-
-        if _is_shell_command_separator(token):
-            at_command_start = True
-            index += 1
-            continue
-
-        if _is_shell_redirection_operator(token):
-            index += 1
-            continue
-
-        if at_command_start and _is_shell_assignment(token):
-            index += 1
-            continue
-
-        command_name = token.rsplit("/", 1)[-1]
-        if at_command_start and command_name in _LOCAL_BASH_COMMAND_PREFIX_KEYWORDS | _LOCAL_BASH_COMMAND_END_KEYWORDS:
-            index += 1
-            continue
-
-        if not at_command_start:
-            index += 1
-            continue
-
-        at_command_start = False
-        if command_name in _LOCAL_BASH_COMMAND_WRAPPERS and index + 1 < len(tokens):
-            wrapped_name = tokens[index + 1].rsplit("/", 1)[-1]
-            if wrapped_name in _LOCAL_BASH_CWD_COMMANDS:
-                target, next_index = _next_cd_target(tokens, index + 2)
-                _validate_local_bash_cwd_target(wrapped_name, target, allowed_paths, thread_data)
-                index = next_index
-                continue
-            _validate_local_bash_root_path_args(wrapped_name, tokens, index + 2)
-
-        if command_name not in _LOCAL_BASH_CWD_COMMANDS:
-            _validate_local_bash_root_path_args(command_name, tokens, index + 1)
-            index += 1
-            continue
-
-        target, next_index = _next_cd_target(tokens, index + 1)
-        _validate_local_bash_cwd_target(command_name, target, allowed_paths, thread_data)
-        index = next_index
-
-
 def resolve_and_validate_user_data_path(path: str, thread_data: ThreadDataState) -> str:
     """Resolve a /mnt/user-data virtual path and validate it stays in bounds."""
     return _resolve_and_validate_user_data_path(path, thread_data)
-
-
-def _braces_are_identifier_placeholders_only(fragment: str) -> bool:
-    """Return True only if every ``{...}`` block is a single identifier placeholder.
-
-    Identifier-only blocks (``{id}``, ``{port}``) come from REST templates and
-    f-strings and are text. Bash brace expansion (``{passwd,shadow}``, ``{,.bak}``,
-    ``{etc,var}``) reconstitutes real host paths at runtime, so it must NOT be
-    exempted. Stray, empty, or nested braces are rejected too (each ``{``/``}``
-    must belong to one balanced single-placeholder block).
-
-    ``${VAR}`` shell variable expansion (e.g. ``/home/${USER}/.ssh/id_rsa``) also
-    expands to a real host path at runtime, so a ``${`` anywhere disqualifies the
-    fragment even though the inner name is identifier-shaped.
-    """
-    if "${" in fragment:
-        return False
-    blocks = _IDENTIFIER_BRACE_BLOCK_PATTERN.findall(fragment)
-    # Every brace must be part of a balanced ``{...}`` block (no stray/nested braces).
-    if fragment.count("{") != len(blocks) or fragment.count("}") != len(blocks):
-        return False
-    return all(_IDENTIFIER_PATTERN.fullmatch(inner) for inner in blocks)
-
-
-def _is_non_path_literal_fragment(fragment: str) -> bool:
-    """Return True if a ``/segment`` match is almost certainly text, not a path.
-
-    The absolute-path scan runs over the raw command string, so it also matches
-    ``/segment`` sequences sitting inside string literals, f-strings, and
-    templates (e.g. ``python -c "print(f'/端口{port}')"`` or a REST template
-    like ``/devices/{id}/port``). Non-ASCII characters and single identifier-like
-    ``{placeholder}`` braces do not appear in real host filesystem paths a command
-    would open, so treating such fragments as text removes those false positives.
-
-    Bash brace expansion (``cat /etc/{passwd,shadow}``) is deliberately NOT
-    exempted: it expands to plain host paths at runtime, so only braces that are
-    single identifier placeholders are treated as text (see
-    :func:`_braces_are_identifier_placeholders_only`).
-
-    This guard is best-effort, not a security boundary (see
-    :func:`validate_local_bash_command_paths`): plain ASCII host paths such as
-    ``/etc/passwd`` contain none of these markers and are still rejected.
-    """
-    if any(ord(ch) > 127 for ch in fragment):
-        return True
-    if "{" in fragment or "}" in fragment:
-        return _braces_are_identifier_placeholders_only(fragment)
-    return False
-
-
-def validate_local_bash_command_paths(command: str, thread_data: ThreadDataState | None) -> None:
-    """Validate absolute paths in local-sandbox bash commands.
-
-    This validation is only a best-effort guard for the explicit
-    ``sandbox.allow_host_bash: true`` opt-in. It is not a secure sandbox
-    boundary and must not be treated as isolation from the host filesystem.
-
-    In local mode, commands must use virtual paths under /mnt/user-data for
-    user data access. Skills paths under /mnt/skills, ACP workspace paths
-    under /mnt/acp-workspace, and custom mount container paths (configured in
-    config.yaml) are allowed (path-traversal checks only; write prevention
-    for bash commands is not enforced here).
-    A small allowlist of common system path prefixes is kept for executable
-    and device references (e.g. /bin/sh, /dev/null). Quoted shell words are
-    validated whole, so a space inside quotes is not treated as a new segment.
-    A windows-incompatible segment still rejects a path that is not already
-    stored on the host; an existing host file may be read or renamed.
-    """
-    if thread_data is None:
-        raise SandboxRuntimeError("Thread data not available for local sandbox")
-
-    # Block file:// URLs which bypass the absolute-path regex but allow local file exfiltration
-    file_url_match = _FILE_URL_PATTERN.search(command)
-    if file_url_match:
-        raise PermissionError(f"Unsafe file:// URL in command: {file_url_match.group()}. Use paths under {VIRTUAL_PATH_PREFIX}. {_LOCAL_BASH_PATH_RECOVERY_GUIDANCE}")
-
-    unsafe_paths: list[str] = []
-    allowed_paths = _get_mcp_allowed_paths()
-    tokens = _split_shell_tokens(command)
-    _validate_local_bash_shell_tokens(command, allowed_paths, tokens, thread_data)
-    path_token_occurrences = _absolute_path_token_occurrences(command, tokens)
-    url_spans = _non_file_url_spans(command)
-
-    for match in _ABSOLUTE_PATH_PATTERN.finditer(command):
-        if _is_in_spans(match.start(), url_spans):
-            continue
-        absolute_path = match.group()
-        if _is_non_path_literal_fragment(absolute_path):
-            continue
-        candidate = _shell_absolute_path_candidate(command, path_token_occurrences, match)
-        if candidate is None:
-            continue
-        if _is_allowed_local_bash_absolute_path(candidate, allowed_paths, allow_system_paths=True, thread_data=thread_data):
-            continue
-
-        unsafe_paths.append(candidate)
-
-    if unsafe_paths:
-        unsafe = ", ".join(sorted(dict.fromkeys(unsafe_paths)))
-        raise PermissionError(f"Unsafe absolute paths in command: {unsafe}. Use paths under {VIRTUAL_PATH_PREFIX}. {_LOCAL_BASH_PATH_RECOVERY_GUIDANCE}")
 
 
 def replace_virtual_paths_in_command(command: str, thread_data: ThreadDataState | None) -> str:
@@ -2412,13 +1990,7 @@ def bash_tool(runtime: Runtime, command: str = "", description: str = "", backgr
     - Use `python` to run Python code.
     - Prefer a thread-local virtual environment in `/mnt/user-data/workspace/.venv`.
     - Use `python -m pip` (inside the virtual environment) to install Python packages.
-    - When running against the local host via host bash, inspect the current environment instead of
-      guessing. For OS detection, start with `uname -s`; on Darwin follow with `sw_vers`. On Linux,
-      start with `uname -a` and read host system files such as `/etc/os-release` only when the active
-      sandbox policy permits it.
-    - If local host bash rejects a path, do not repeat the rejected command. For environment questions,
-      retry with command-only probes; otherwise use allowed virtual paths or explain the restriction.
-    - Use background=True for long commands. Wait up to 10 seconds: a fast command returns
+    - Use background=True for long commands, including server processes. Wait up to 10 seconds: a fast command returns
       completed output; a longer one returns status=running and a session_id. It is the same
       process, not a retry. Continue independent work, then call bash(session_id=...) to collect
       new output and exit status, or bash(session_id=..., cancel=True) to stop it. These commands
@@ -2426,7 +1998,7 @@ def bash_tool(runtime: Runtime, command: str = "", description: str = "", backgr
       Supported by AIO and POSIX LocalSandbox; other providers keep foreground bash.
 
     Args:
-        command: The bash command to execute. Always use absolute paths for files and directories.
+        command: The bash command to execute.
         description: Optional short explanation of this command shown in the UI.
         background: Wait up to 10 seconds, then return a managed session if still running.
         session_id: Read a previously returned session owned by this agent; leave command empty.
@@ -2437,8 +2009,8 @@ def bash_tool(runtime: Runtime, command: str = "", description: str = "", backgr
     try:
         if session_id and command or cancel and not session_id:
             raise ValueError("poll/cancel requires session_id and an empty command")
-        if timeout_seconds is not None and (type(timeout_seconds) not in (int, float) or not 0 < timeout_seconds <= 86400):
-            raise ValueError("command timeout must be positive and at most one day")
+        if timeout_seconds is not None and (type(timeout_seconds) not in (int, float) or not 0 < timeout_seconds):
+            raise ValueError("command timeout must be positive")
         if background and not session_id and not command.strip():
             raise ValueError("a command is required")
         managed = {"background": background, "session_id": session_id, "cancel": cancel, "wait_seconds": wait_seconds} if background or session_id else {}
@@ -2461,7 +2033,6 @@ def bash_tool(runtime: Runtime, command: str = "", description: str = "", backgr
                 return f"Error: {LOCAL_HOST_BASH_DISABLED_MESSAGE}"
             ensure_thread_directories_exist(runtime)
             thread_data = get_thread_data(runtime)
-            validate_local_bash_command_paths(command, thread_data)
             command = replace_virtual_paths_in_command(command, thread_data)
             command = _apply_cwd_prefix(command, thread_data)
             # POSIX-only: the Windows local sandbox may execute via

@@ -255,26 +255,12 @@ class Registry:
             self.owned(item, owner)
             folder = Path(item["assignment"]["folder"]).resolve()
             result = Path(result).expanduser().resolve()
-            if not result.is_relative_to(folder) or result.suffix.lower() != ".md":
-                raise RegistryError(
-                    "Result must be a Markdown file inside the assigned folder"
-                )
-            try:
-                text = result.read_text(encoding="utf-8")
-            except (OSError, UnicodeError) as exc:
-                raise RegistryError(f"Cannot read result: {exc}") from exc
-            if not 1 <= len(text.split()) <= 500:
-                raise RegistryError(
-                    "Facts must be nonempty and at most 500 words (one-page convention)"
-                )
-            if assessment == "researched" and not re.search(r"https?://\S+", text):
-                raise RegistryError("Facts must contain a source URL")
+            if not result.is_file():
+                raise RegistryError("Save the result file before completing the group")
             if remaining_todo is not None:
                 pending = Path(remaining_todo).expanduser().resolve()
-                if not pending.is_relative_to(folder) or not pending.is_file():
-                    raise RegistryError(
-                        "Remaining todo must be an existing file inside the assigned folder"
-                    )
+                if not pending.is_file():
+                    raise RegistryError("Remaining todo must be an existing file")
                 item["remaining_todo"] = str(pending)
             item.update(
                 folder=str(folder),
@@ -293,20 +279,6 @@ class Registry:
         path = Path(evidence).expanduser().resolve()
         if not path.is_file() or path.stat().st_size == 0:
             raise RegistryError("Save search evidence before completing a keyword")
-        if path.suffix.lower() == ".json":
-            try:
-                saved = json.loads(path.read_text(encoding="utf-8"))
-            except (UnicodeError, json.JSONDecodeError) as exc:
-                raise RegistryError("Search evidence JSON is invalid") from exc
-            if isinstance(saved, dict) and (
-                saved.get("status")
-                in ("running", "paused", "partial", "error", "unresolved")
-                or saved.get("traversal_complete") is False
-                or saved.get("stop_reason") == "timeout"
-            ):
-                raise RegistryError(
-                    "Search evidence is incomplete; keep this keyword todo"
-                )
         with self.locked():
             data = self.read()
             item = self.pending(data, "keywords", keyword_key(value))

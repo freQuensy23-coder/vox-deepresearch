@@ -17,21 +17,55 @@ def load():
 
 
 def payload():
-    return {"items": [{"id": "001", "state": "Technical discussion"}, {"id": "two", "state": "Service advertisement"}], "questions": {"relevant": {"type": "noul", "instructions": "Relevant?"}, "role": {"type": "choice", "criteria": {"discussion": "Discussion", "advert": "Advert"}}, "priority": {"type": "score", "criteria": ["Low", "High"]}}}
+    return {
+        "items": [
+            {"id": "001", "state": "Technical discussion"},
+            {"id": "two", "state": "Service advertisement"},
+        ],
+        "questions": {
+            "relevant": {"type": "noul", "instructions": "Relevant?"},
+            "role": {
+                "type": "choice",
+                "criteria": {"discussion": "Discussion", "advert": "Advert"},
+            },
+            "priority": {"type": "score", "criteria": ["Low", "High"]},
+        },
+    }
 
 
 def response(body):
-    return {"model": "jev-1.13.0", "usage": {"input_tokens": 2, "output_tokens": 3}, "answers": {"relevant": {"type": "noul", "noul": 0.9}, "role": {"type": "choice", "choice": "discussion", "confidence": 0.8, "probabilities": {"discussion": 0.8, "advert": 0.2}}, "priority": {"type": "score", "score": 0.9, "confidence": 0.9, "legend": {"0": "Low", "1": "High"}, "probabilities": {"0": 0.1, "1": 0.9}}}}
+    return {
+        "model": "jev-1.13.0",
+        "usage": {"input_tokens": 2, "output_tokens": 3},
+        "answers": {
+            "relevant": {"type": "noul", "noul": 0.9},
+            "role": {
+                "type": "choice",
+                "choice": "discussion",
+                "confidence": 0.8,
+                "probabilities": {"discussion": 0.8, "advert": 0.2},
+            },
+            "priority": {
+                "type": "score",
+                "score": 0.9,
+                "confidence": 0.9,
+                "legend": {"0": "Low", "1": "High"},
+                "probabilities": {"0": 0.1, "1": 0.9},
+            },
+        },
+    }
 
 
 def test_evaluate_keeps_complete_ids_errors_usage_without_mutating_input():
     module = load()
     calls = []
+
     def request(method, path, body=None):
         calls.append(body)
         if len(calls) == 2:
             raise module.ClientError("http_503")
         return response(body)
+
     data = payload()
     before = json.dumps(data)
     result = module.evaluate(data, request)
@@ -42,7 +76,9 @@ def test_evaluate_keeps_complete_ids_errors_usage_without_mutating_input():
     assert json.dumps(data) == before
 
 
-@pytest.mark.parametrize("change", ["duplicate", "too_many", "unknown_type", "bad_choice", "empty", "nan"])
+@pytest.mark.parametrize(
+    "change", ["duplicate", "unknown_type", "bad_choice", "empty", "nan"]
+)
 def test_invalid_input_is_rejected_before_any_call(change):
     module = load()
     data = payload()
@@ -62,7 +98,10 @@ def test_invalid_input_is_rejected_before_any_call(change):
         module.evaluate(data, lambda *args: pytest.fail("request sent"))
 
 
-@pytest.mark.parametrize("change", ["missing", "wrong_type", "probability", "choice", "legend", "usage", "model"])
+@pytest.mark.parametrize(
+    "change",
+    ["missing", "wrong_type", "probability", "choice", "legend", "usage", "model"],
+)
 def test_malformed_answers_are_errors_not_classifications(change):
     module = load()
     answer = response({})
@@ -95,14 +134,18 @@ def test_output_exclusive_and_input_hash_bound(tmp_path):
     assert target.stat().st_mode & 0o777 == 0o600
 
 
-def test_batch_submission_has_explicit_bounded_free_policy_and_readback():
+def test_batch_submission_preserves_agent_policy_and_readback():
     module = load()
     calls = []
+
     def request(method, path, body=None):
         calls.append((method, path, body))
         return {"id": "batch_" + "a" * 32, "total": 2, "status": "in_progress"}
-    handle = module.submit(payload(), request)
-    assert calls[0][2]["policy"] == {"allow_paid": False, "free_wait_seconds": 600, "concurrency": 1}
+
+    data = payload()
+    data["policy"] = {"concurrency": 8, "free_wait_seconds": 600}
+    handle = module.submit(data, request)
+    assert calls[0][2]["policy"] == {**data["policy"], "allow_paid": False}
     assert [row["custom_id"] for row in calls[0][2]["requests"]] == ["001", "two"]
     assert calls[1][:2] == ("GET", "/v1/batches/" + handle["id"])
     assert handle["ids"] == ["001", "two"]
@@ -112,12 +155,26 @@ def test_batch_collection_paginates_reconciles_and_preserves_order():
     module = load()
     handle = {"id": "batch_" + "a" * 32, "ids": ["001", "two"]}
     calls = []
+
     def request(method, path, body=None):
         calls.append(path)
-        if not "/results" in path:
+        if "/results" not in path:
             return {"id": handle["id"], "total": 2, "status": "completed"}
         offset = 0 if "offset=0" in path else 1
-        return {"offset": offset, "total": 2, "has_more": offset == 0, "results": [{"custom_id": handle["ids"][offset], "status_code": 200, "response": response({}), "error": None}]}
+        return {
+            "offset": offset,
+            "total": 2,
+            "has_more": offset == 0,
+            "results": [
+                {
+                    "custom_id": handle["ids"][offset],
+                    "status_code": 200,
+                    "response": response({}),
+                    "error": None,
+                }
+            ],
+        }
+
     result = module.collect(handle, request)
     assert [row["custom_id"] for row in result["results"]] == handle["ids"]
     assert len(calls) == 3
@@ -127,10 +184,12 @@ def test_batch_collection_paginates_reconciles_and_preserves_order():
 def test_batch_readback_failure_keeps_persisted_handle():
     module = load()
     persisted = []
+
     def request(method, path, body=None):
         if method == "POST":
             return {"id": "batch_" + "a" * 32, "total": 2}
         raise module.ClientError("http_503")
+
     with pytest.raises(module.ClientError):
         module.submit(payload(), request, persist=persisted.append)
     assert persisted[0]["ids"] == ["001", "two"]
@@ -147,12 +206,52 @@ def test_cancel_requires_exact_handle_and_reads_back_target():
     module = load()
     handle = {"id": "batch_" + "a" * 32, "ids": ["001"]}
     calls = []
+
     def request(method, path, body=None):
         calls.append((method, path))
         return {"id": handle["id"], "total": 1, "status": "cancelled"}
+
     result = module.cancel(handle, request)
     assert result["status"] == "cancelled"
-    assert calls == [("DELETE", "/v1/batches/" + handle["id"]), ("GET", "/v1/batches/" + handle["id"])]
+    assert calls == [
+        ("DELETE", "/v1/batches/" + handle["id"]),
+        ("GET", "/v1/batches/" + handle["id"]),
+    ]
     with pytest.raises(module.ClientError):
         module.cancel({"id": "../models"}, request)
 
+
+def test_evaluate_does_not_skip_later_items_after_five_minutes(monkeypatch):
+    from types import SimpleNamespace
+
+    module = load()
+    clock = [0]
+    monkeypatch.setattr(
+        module, "time", SimpleNamespace(monotonic=lambda: clock[0]), raising=False
+    )
+    calls = []
+
+    def request(method, path, body):
+        calls.append(body)
+        clock[0] += 301
+        return response(body)
+
+    result = module.evaluate(payload(), request)
+    assert len(calls) == 2
+    assert result["counts"] == {"ok": 2}
+
+
+def test_batch_larger_than_old_client_caps_reaches_gateway():
+    module = load()
+    data = payload()
+    data["items"] = [{"id": str(i), "state": "x" * 6000} for i in range(65)]
+    calls = []
+
+    def request(method, path, body=None):
+        calls.append((method, path, body))
+        return {"id": "batch_" + "a" * 32, "total": 65, "status": "in_progress"}
+
+    handle = module.submit(data, request)
+    assert len(handle["ids"]) == 65
+    assert len(calls[0][2]["requests"]) == 65
+    assert calls[0][2]["policy"] == {"allow_paid": False}

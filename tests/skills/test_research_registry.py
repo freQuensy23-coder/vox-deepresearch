@@ -174,7 +174,7 @@ def test_release_leaves_todo_and_allows_explicit_retry(store, tmp_path, status):
     store.claim_group(-10001, owner="retry", folder=tmp_path)
 
 
-@pytest.mark.parametrize("content", [None, "", "word " * 501, "Fact without source"])
+@pytest.mark.parametrize("content", [None])
 def test_invalid_results_cannot_mark_done(store, tmp_path, content):
     store.add("groups", -10001, **PROVENANCE)
     store.claim_group(-10001, owner="depth", folder=tmp_path)
@@ -211,10 +211,7 @@ def test_excluded_group_records_assessment_without_fabricated_public_url(
     "saved",
     [
         None,
-        '{"status":"paused"}',
-        '{"traversal_complete":false}',
-        '{"stop_reason":"timeout"}',
-        "{",
+        "",
     ],
 )
 def test_missing_or_incomplete_keyword_evidence_remains_todo(store, tmp_path, saved):
@@ -284,3 +281,40 @@ def test_cli_shares_same_transitions(store, tmp_path, capsys):
         base + ["claim-group", "-10001", "--owner", "depth", "--folder", str(tmp_path)]
     )
     assert json.loads(capsys.readouterr().out)["assignment"]["owner"] == "depth"
+
+
+@pytest.mark.parametrize(
+    "content", ["", "word " * 501, "Fact without a fabricated source"]
+)
+def test_registry_records_agent_completion_without_judging_facts(
+    store, tmp_path, content
+):
+    store.add("groups", -10001, **PROVENANCE)
+    folder = tmp_path / "assigned"
+    folder.mkdir()
+    store.claim_group(-10001, owner="depth", folder=folder)
+    result = tmp_path / "agent-chosen-result.txt"
+    result.write_text(content, encoding="utf-8")
+    done = store.complete_group(-10001, owner="depth", result=result)
+    assert done["result"] == str(result)
+    assert done["folder"] == str(folder)
+    assert not store.snapshot()["groups"]["todo"]
+
+
+@pytest.mark.parametrize(
+    "saved",
+    [
+        '{"status":"paused"}',
+        '{"traversal_complete":false}',
+        '{"stop_reason":"timeout"}',
+        "{",
+    ],
+)
+def test_keyword_completion_is_decided_by_agent(store, tmp_path, saved):
+    store.add("keywords", "work", **PROVENANCE)
+    evidence = tmp_path / "search.json"
+    evidence.write_text(saved, encoding="utf-8")
+    assert store.complete_keyword("work", evidence=evidence)["search_evidence"] == str(
+        evidence
+    )
+    assert not store.snapshot()["keywords"]["todo"]

@@ -28,9 +28,18 @@ def load_relay():
 
 @pytest.fixture
 def upstream():
-    state = SimpleNamespace(condition=threading.Condition(), starts=[], ends=[],
-                            requests=[], active=0, maximum=0, release=threading.Event(),
-                            disconnected=threading.Event(), status=200, retry_after=None)
+    state = SimpleNamespace(
+        condition=threading.Condition(),
+        starts=[],
+        ends=[],
+        requests=[],
+        active=0,
+        maximum=0,
+        release=threading.Event(),
+        disconnected=threading.Event(),
+        status=200,
+        retry_after=None,
+    )
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -46,7 +55,9 @@ def upstream():
                 state.active += 1
                 state.maximum = max(state.maximum, state.active)
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                state.requests.append((self.command, self.path, dict(self.headers), body))
+                state.requests.append(
+                    (self.command, self.path, dict(self.headers), body)
+                )
                 state.condition.notify_all()
             try:
                 status = state.status if index == 0 else 200
@@ -111,16 +122,30 @@ def relays(tmp_path, upstream):
 
     class HTTPTransport(module.HTTPSUpstream):
         def __init__(self, timeout):
-            self.connection = http.client.HTTPConnection(*upstream.address, timeout=timeout)
+            self.connection = http.client.HTTPConnection(
+                *upstream.address, timeout=timeout
+            )
 
     def start(**overrides):
-        options = dict(spacing=0.08, cooldown=0.12, backoff_cap=1.0,
-                       queue_wait=0.6, request_deadline=3, socket_idle=2,
-                       client_timeout=0.3, max_clients=16, max_inflight=1)
+        options = dict(
+            spacing=0.08,
+            cooldown=0.12,
+            backoff_cap=1.0,
+            queue_wait=0.6,
+            request_deadline=3,
+            socket_idle=2,
+            client_timeout=0.3,
+            max_clients=16,
+            max_inflight=1,
+        )
         options.update(overrides)
-        server = module.RelayServer(("127.0.0.1", 0), key_file=key,
-                                    state_dir=tmp_path / "state",
-                                    transport_factory=HTTPTransport, **options)
+        server = module.RelayServer(
+            ("127.0.0.1", 0),
+            key_file=key,
+            state_dir=tmp_path / "state",
+            transport_factory=HTTPTransport,
+            **options,
+        )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         servers.append((server, thread))
@@ -134,7 +159,14 @@ def relays(tmp_path, upstream):
         thread.join(2)
 
 
-def request(server, path="/search/text?query=ordinary", method="GET", body=None, headers=None, timeout=5):
+def request(
+    server,
+    path="/search/text?query=ordinary",
+    method="GET",
+    body=None,
+    headers=None,
+    timeout=5,
+):
     connection = http.client.HTTPConnection(*server.server_address, timeout=timeout)
     connection.request(method, path, body=body, headers=headers or {})
     response = connection.getresponse()
@@ -150,9 +182,17 @@ def await_starts(upstream, count):
 
 def test_defaults_are_deployment_limits():
     module = load_relay()
-    assert module.DEFAULTS == dict(spacing=0.25, cooldown=60.0, backoff_cap=900.0,
-                                   queue_wait=360.0, request_deadline=2100.0,
-                                   socket_idle=1890.0, client_timeout=30.0, max_clients=16, max_inflight=5)
+    assert module.DEFAULTS == dict(
+        spacing=0.25,
+        cooldown=60.0,
+        backoff_cap=900.0,
+        queue_wait=360.0,
+        request_deadline=2100.0,
+        socket_idle=1890.0,
+        client_timeout=30.0,
+        max_clients=16,
+        max_inflight=5,
+    )
     assert module.UPSTREAM == "api.vox-lab.com"
 
 
@@ -163,7 +203,10 @@ def test_raw_parallel_clients_hold_slot_until_stream_eof(relays, upstream):
     response = first.getresponse()
     assert response.readline() == b'{"point":0}\n'
     results = []
-    threads = [threading.Thread(target=lambda: results.append(request(server))) for _ in range(3)]
+    threads = [
+        threading.Thread(target=lambda: results.append(request(server)))
+        for _ in range(3)
+    ]
     for thread in threads:
         thread.start()
     time.sleep(0.18)
@@ -180,7 +223,9 @@ def test_raw_parallel_clients_hold_slot_until_stream_eof(relays, upstream):
 
 def test_relay_owns_key_and_does_not_forward_caller_headers(relays, upstream):
     server = relays()
-    status, headers, _ = request(server, headers={"Authorization": "Bearer caller-key", "Accept": "*/*"})
+    status, headers, _ = request(
+        server, headers={"Authorization": "Bearer caller-key", "Accept": "*/*"}
+    )
     assert status == 200 and headers["Connection"] == "close"
     forwarded = upstream.requests[0][2]
     assert forwarded["Authorization"] == "Bearer synthetic-relay-owned-key"
@@ -188,71 +233,119 @@ def test_relay_owns_key_and_does_not_forward_caller_headers(relays, upstream):
     assert forwarded["Accept-Encoding"] == "identity"
 
 
-@pytest.mark.parametrize("path,method,headers,body", [
-    ("https://evil.invalid/search/text", "GET", {}, None),
-    ("//evil.invalid/search/text", "GET", {}, None),
-    ("api.vox-lab.com:443", "CONNECT", {}, None),
-    ("/search/text", "DELETE", {}, None),
-    ("/reporter/parse", "GET", {}, None),
-    ("/reporter/user/1", "GET", {}, None),
-    ("/groups/-1001/../messages", "GET", {}, None),
-    ("/groups/%2d1001", "GET", {}, None),
-    ("/search/text?query=a&query=b", "GET", {}, None),
-    ("/search/text?destination=https://evil.invalid", "GET", {}, None),
-    ("/search/text?timeout=601", "GET", {}, None),
-    ("/search/text?limit=10001", "GET", {}, None),
-    ("/search/text?stream=maybe", "GET", {}, None),
-    ("/search/text?query=%0a", "GET", {}, None),
-    ("/search/text?query=%zz", "GET", {}, None),
-    ("/search/text", "GET", {"X-Upstream": "evil.invalid"}, None),
-    ("/search/text", "GET", {"Transfer-Encoding": "chunked"}, None),
-    ("/search/text", "GET", {}, b"x"),
-    ("/search/text", "POST", {}, b"{}"),
-    ("/search/text?query=" + "x" * 8192, "GET", {}, None),
-    ("/search/text", "GET", {"Accept": "x" * 17000}, None),
-])
+@pytest.mark.parametrize(
+    "path,method,headers,body",
+    [
+        ("https://evil.invalid/search/text", "GET", {}, None),
+        ("//evil.invalid/search/text", "GET", {}, None),
+        ("api.vox-lab.com:443", "CONNECT", {}, None),
+        ("/search/text", "DELETE", {}, None),
+        ("/reporter/parse", "GET", {}, None),
+        ("/reporter/user/1", "GET", {}, None),
+        ("/groups/-1001/../messages", "GET", {}, None),
+        ("/groups/%2d1001", "GET", {}, None),
+        ("/search/text?query=a&query=b", "GET", {}, None),
+        ("/search/text?destination=https://evil.invalid", "GET", {}, None),
+        ("/search/text?timeout=601", "GET", {}, None),
+        ("/search/text?limit=10001", "GET", {}, None),
+        ("/search/text?stream=maybe", "GET", {}, None),
+        ("/search/text?query=%0a", "GET", {}, None),
+        ("/search/text?query=%zz", "GET", {}, None),
+        ("/search/text", "GET", {"X-Upstream": "evil.invalid"}, None),
+        ("/search/text", "GET", {"Transfer-Encoding": "chunked"}, None),
+        ("/search/text", "GET", {}, b"x"),
+        ("/search/text", "POST", {}, b"{}"),
+        ("/search/text?query=" + "x" * 8192, "GET", {}, None),
+        ("/search/text", "GET", {"Accept": "x" * 17000}, None),
+    ],
+)
 def test_denials_never_open_upstream(relays, upstream, path, method, headers, body):
     status, _, _ = request(relays(), path, method, body, headers)
     assert status in {400, 403, 405, 413, 414, 431}
     assert not upstream.starts
 
 
-@pytest.mark.parametrize("path", [
-    "/search/ai/raw/GROUP?query=test&limit=10&offset=0",
-    "/groups/-1001", "/groups/-1001/messages?messages_limit=10&messages_min=1&members_min=0",
-    "/ai_analytics/GROUP/-1001", "/ai_analytics/custom/GROUP/-1001?custom_prompt=test",
-    "/user_tracker/123/panels/groups", "/user_tracker/123/panels/top_groups?limit=10",
-    "/user_tracker/123/panels/messages?limit=10",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/search/ai/raw/GROUP?query=test&limit=10&offset=0",
+        "/groups/-1001",
+        "/groups/-1001/messages?messages_limit=10&messages_min=1&members_min=0",
+        "/ai_analytics/GROUP/-1001",
+        "/ai_analytics/custom/GROUP/-1001?custom_prompt=test",
+        "/user_tracker/123/panels/groups",
+        "/user_tracker/123/panels/top_groups?limit=10",
+        "/user_tracker/123/panels/messages?limit=10",
+    ],
+)
 def test_cli_get_endpoints_are_allowed(relays, path):
     assert request(relays(), path)[0] == 200
 
 
-@pytest.mark.parametrize("body", [
-    {"groups_search_query": "test", "run_parser": False, "find_new_users": False, "new_users_limit": 0},
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {
+            "groups_search_query": "test",
+            "run_parser": False,
+            "find_new_users": False,
+            "new_users_limit": 0,
+        },
+    ],
+)
 def test_safe_post_body_is_allowed(relays, upstream, body):
-    assert request(relays(), "/reporter/parse", "POST", json.dumps(body), {"Content-Type": "application/json"})[0] == 200
+    assert (
+        request(
+            relays(),
+            "/reporter/parse",
+            "POST",
+            json.dumps(body),
+            {"Content-Type": "application/json"},
+        )[0]
+        == 200
+    )
     assert json.loads(upstream.requests[0][3]) == body
 
 
-@pytest.mark.parametrize("body", [
-    {}, {"run_parser": True, "find_new_users": False, "new_users_limit": 0},
-    {"run_parser": False, "find_new_users": True, "new_users_limit": 0},
-    {"run_parser": False, "find_new_users": False, "new_users_limit": 1},
-    {"run_parser": "false", "find_new_users": False, "new_users_limit": 0},
-    {"run_parser": False, "find_new_users": False, "new_users_limit": False},
-    {"run_parser": False, "find_new_users": False, "new_users_limit": 0, "destination": "evil"},
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"run_parser": True, "find_new_users": False, "new_users_limit": 0},
+        {"run_parser": False, "find_new_users": True, "new_users_limit": 0},
+        {"run_parser": False, "find_new_users": False, "new_users_limit": 1},
+        {"run_parser": "false", "find_new_users": False, "new_users_limit": 0},
+        {"run_parser": False, "find_new_users": False, "new_users_limit": False},
+        {
+            "run_parser": False,
+            "find_new_users": False,
+            "new_users_limit": 0,
+            "destination": "evil",
+        },
+    ],
+)
 def test_unsafe_post_never_opens_upstream(relays, upstream, body):
-    assert request(relays(), "/reporter/parse", "POST", json.dumps(body), {"Content-Type": "application/json"})[0] == 400
+    assert (
+        request(
+            relays(),
+            "/reporter/parse",
+            "POST",
+            json.dumps(body),
+            {"Content-Type": "application/json"},
+        )[0]
+        == 400
+    )
     assert not upstream.starts
 
 
 @pytest.mark.parametrize("retry_after", ["1", "date", "invalid"])
 def test_429_persists_cooldown_across_relay_restart(relays, upstream, retry_after):
     upstream.status = 429
-    upstream.retry_after = formatdate(time.time() + 2, usegmt=True) if retry_after == "date" else retry_after
+    upstream.retry_after = (
+        formatdate(time.time() + 2, usegmt=True)
+        if retry_after == "date"
+        else retry_after
+    )
     server = relays(queue_wait=2.5)
     before = time.time()
     assert request(server)[0] == 429
@@ -287,8 +380,12 @@ def test_process_restart_preserves_retry_after(tmp_path, upstream):
     processes = []
 
     def start():
-        process = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(
+            [sys.executable, "-c", code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         processes.append(process)
         port = int(process.stdout.readline())
         return SimpleNamespace(server_address=("127.0.0.1", port))
@@ -326,7 +423,9 @@ def test_queued_request_returns_bounded_busy(relays, upstream):
 
 def test_client_connection_count_is_bounded(relays, upstream):
     server = relays(max_clients=2, client_timeout=1)
-    sockets = [socket.create_connection(server.server_address, timeout=2) for _ in range(2)]
+    sockets = [
+        socket.create_connection(server.server_address, timeout=2) for _ in range(2)
+    ]
     try:
         time.sleep(0.05)
         assert request(server)[0] == 503
@@ -401,7 +500,7 @@ def test_redirect_is_not_followed_or_forwarded(relays, upstream):
 def test_http_200_backend_error_sets_cooldown(relays, upstream):
     server = relays()
     status, _, body = request(server, "/search/text?query=error200")
-    assert status == 200 and b'synthetic backend failure' in body
+    assert status == 200 and b"synthetic backend failure" in body
     state = json.loads((server.state_dir / "state.json").read_text())
     assert state["failures"] == 1 and state["cooldown_until"] > time.time()
 
@@ -416,16 +515,45 @@ def test_real_vox_cli_uses_relay_without_upstream_key(relays, tmp_path, upstream
     server = relays()
     script = MODULE.parents[1] / "skills/public/telegram-research/scripts/vox.py"
     import os
-    env = dict(os.environ, HOME=str(tmp_path), VOX_RELAY_URL=f"http://127.0.0.1:{server.server_port}")
+
+    env = dict(
+        os.environ,
+        HOME=str(tmp_path),
+        VOX_RELAY_URL=f"http://127.0.0.1:{server.server_port}",
+    )
     env.pop("VOX_API_KEY", None)
     result = subprocess.run(
-        [sys.executable, str(script), "--attempts", "1", "search-page", "ordinary", "--limit", "10",
-         "--from", "2026-01-01", "--to", "2026-02-01", "--no-forwards", "--dedup",
-         "--type", "post", "--exclude-users", "123", "--output", str(tmp_path / "receipt.json")],
-        cwd=tmp_path, env=env, text=True, capture_output=True, timeout=5)
+        [
+            sys.executable,
+            str(script),
+            "search-page",
+            "ordinary",
+            "--limit",
+            "10",
+            "--from",
+            "2026-01-01",
+            "--to",
+            "2026-02-01",
+            "--no-forwards",
+            "--dedup",
+            "--type",
+            "post",
+            "--exclude-users",
+            "123",
+            "--output",
+            str(tmp_path / "receipt.json"),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=5,
+    )
     assert result.returncode == 0, result.stderr
     assert json.loads((tmp_path / "receipt.json").read_text())["messages"] == []
-    assert upstream.requests[0][2]["Authorization"] == "Bearer synthetic-relay-owned-key"
+    assert (
+        upstream.requests[0][2]["Authorization"] == "Bearer synthetic-relay-owned-key"
+    )
 
 
 def test_retry_after_never_shortens_default_cooldown(tmp_path):
@@ -444,8 +572,14 @@ def test_retry_after_never_shortens_default_cooldown(tmp_path):
 
 def test_logs_do_not_expose_request_data(relays, capsys):
     server = relays()
-    assert request(server, "/search/text?query=private-topic",
-                   headers={"Authorization": "Bearer private-caller-key"})[0] == 200
+    assert (
+        request(
+            server,
+            "/search/text?query=private-topic",
+            headers={"Authorization": "Bearer private-caller-key"},
+        )[0]
+        == 200
+    )
     out, err = capsys.readouterr()
     assert err == ""
     assert "private-topic" not in out

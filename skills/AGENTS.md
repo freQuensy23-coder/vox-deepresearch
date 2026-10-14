@@ -26,9 +26,9 @@
   timeout range is 10–600 seconds; progress is not a successful empty search.
   `group-preview` uses POST /reporter/parse with processing explicitly disabled:
   run_parser=false, find_new_users=false, new_users_limit=0.
-  HTTP reads retry one transient disconnect/502/503/504/524 with a visible
-  diagnostic; `--attempts 1` disables that transport retry. Do not automatically
-  retry auth errors, not-found responses, rate limits or research pagination.
+  Each HTTP primitive makes one attempt. Direct CLI calls have no fixed global
+  delay or implicit retry; the configured relay owns dynamic admission. The agent
+  follows the skill's instructions to adjust, wait and repeat failed queries.
   Offline transport contracts live in `tests/skills/test_telegram_research.py`;
   live behavioral checks and their limits are in the skill's `evals/` directory.
 

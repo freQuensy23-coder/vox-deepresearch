@@ -1335,7 +1335,6 @@ class TestBashToolInjectsActiveSecrets:
             patch.object(tools_mod, "is_host_bash_allowed", return_value=True),
             patch.object(tools_mod, "ensure_thread_directories_exist", return_value=None),
             patch.object(tools_mod, "get_thread_data", return_value=thread_data),
-            patch.object(tools_mod, "validate_local_bash_command_paths", return_value=None),
             patch.object(tools_mod, "replace_virtual_paths_in_command", side_effect=lambda command, td: command),
             patch.object(tools_mod, "_apply_cwd_prefix", side_effect=lambda command, td: command),
             # Pinned so the assertion below does not depend on the host OS:
@@ -1378,7 +1377,6 @@ class TestBashToolInjectsActiveSecrets:
             patch.object(tools_mod, "is_host_bash_allowed", return_value=True),
             patch.object(tools_mod, "ensure_thread_directories_exist", return_value=None),
             patch.object(tools_mod, "get_thread_data", return_value=thread_data),
-            patch.object(tools_mod, "validate_local_bash_command_paths", return_value=None),
             patch.object(tools_mod, "replace_virtual_paths_in_command", side_effect=lambda command, td: command),
             patch.object(tools_mod, "_apply_cwd_prefix", side_effect=lambda command, td: command),
             patch.object(tools_mod, "_is_windows", return_value=True),

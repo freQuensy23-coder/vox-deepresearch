@@ -131,11 +131,11 @@ def test_aio_native_async_poll_and_owned_cleanup():
     client = client_class.return_value
     client.bash.exec.return_value = aio_result("running", "first\n", 6)
     client.bash.output.side_effect = [aio_result("running", "", 6), aio_result("completed", "last\n", 11, 0)]
-    result = box.start_command("python3 collect.py", owner_id="owner", env={"TEST_SECRET": "secret"}, timeout=2700, yield_time=0)
+    result = box.start_command("python3 collect.py", owner_id="owner", env={"TEST_SECRET": "secret"}, timeout=90000, yield_time=0)
     assert result["status"] == "running"
     args = client.bash.exec.call_args.kwargs
     assert args["async_mode"] is True
-    assert args["hard_timeout"] == 2700
+    assert args["hard_timeout"] == 90000
     assert args["env"]["TEST_SECRET"] == "secret"
     assert "nohup" not in args["command"]
     final = box.poll_command(result["session_id"], owner_id="owner")
@@ -179,3 +179,38 @@ def test_closed_registry_rejects_new_processes(sandbox):
     sandbox._command_sessions.close()
     with pytest.raises(RuntimeError, match="closed"):
         sandbox.start_command(command("print(1)"), owner_id="owner")
+
+
+@pytest.mark.parametrize("background", [False, True])
+def test_native_bash_runs_python_file_suffixes_and_globs(sandbox, tmp_path, monkeypatch, background):
+    from pathlib import Path
+
+    from deerflow.sandbox.tools import bash_tool
+
+    thread_data = {f"{name}_path": str(tmp_path / name) for name in ("workspace", "uploads", "outputs")}
+    for path in thread_data.values():
+        Path(path).mkdir()
+    runtime = SimpleNamespace(state={"sandbox": {"sandbox_id": "local"}, "thread_data": thread_data}, context={"thread_id": "native", "sandbox_lease_owner_id": "owner"}, config={})
+    monkeypatch.setattr("deerflow.sandbox.tools.ensure_sandbox_initialized", lambda runtime: sandbox)
+    monkeypatch.setattr("deerflow.sandbox.tools.is_host_bash_allowed", lambda: True)
+    source = (
+        "from pathlib import Path; p=Path.cwd(); (p/'search-a').mkdir(); "
+        "Path(f'{p}/facts.md').write_text('fact'); Path(f'{p}/registry.json').write_text('{}'); "
+        "(p/'search-a'/'manifest.json').write_text('{}'); "
+        "print([str(x.relative_to(p)) for x in p.glob('search-*/manifest.json')])"
+    )
+    result = bash_tool.func(runtime=runtime, command=command(source), background=background, timeout_seconds=90000)
+    if background:
+        result = json.loads(result)
+        assert result["exit_code"] == 0
+        result = result["stdout"]
+    assert "search-a/manifest.json" in result
+    assert (Path(thread_data["workspace_path"]) / "facts.md").read_text() == "fact"
+    assert (Path(thread_data["workspace_path"]) / "registry.json").exists()
+
+
+def test_starting_more_than_64_commands_retains_prior_handles(sandbox):
+    sessions = [sandbox.start_command(command("print('ok')"), owner_id="owner", yield_time=1) for _ in range(70)]
+    for session in sessions:
+        assert session["exit_code"] == 0
+        assert sandbox.poll_command(session["session_id"], owner_id="owner")["exit_code"] == 0

@@ -52,8 +52,7 @@ def arguments(argv):
     parser.add_argument("--expected-cursor")
     parser.add_argument("--max-pages", type=bounded_integer(1, 10000), default=5)
     parser.add_argument("--limit", type=bounded_integer(1, 10000), default=2000)
-    parser.add_argument("--max-seconds", type=bounded_integer(1, 840), default=840)
-    parser.add_argument("--attempts", type=int, choices=[1, 2], default=2)
+    parser.add_argument("--max-seconds", type=bounded_integer(1, 2**63 - 1))
     parser.add_argument("--type", choices=["all", "post", "comment"], default="all")
     parser.add_argument("--order", choices=["asc", "desc"], default="desc")
     parser.add_argument("--include", nargs="+")
@@ -80,7 +79,9 @@ def arguments(argv):
         try:
             timestamp(args.expected_cursor)
         except CollectionError:
-            raise CollectionError("Invalid expected cursor; copy the exact remaining_window boundary.") from None
+            raise CollectionError(
+                "Invalid expected cursor; copy the exact remaining_window boundary."
+            ) from None
     if not args.query.strip() or len(args.query) >= 50:
         parser.error("Text search requires a nonempty query under 50 characters.")
     if timestamp(args.from_date) > timestamp(args.to_date):
@@ -119,7 +120,15 @@ def parameters(args):
     values = {
         key: value
         for key, value in vars(args).items()
-        if key not in {"workspace", "resume", "max_pages", "expected_cursor", "max_seconds", "attempts"}
+        if key
+        not in {
+            "workspace",
+            "resume",
+            "max_pages",
+            "expected_cursor",
+            "max_seconds",
+            "attempts",
+        }
     }
     values["public_card"] = [
         str(Path(p).expanduser().resolve()) for p in args.public_card or []
@@ -129,8 +138,6 @@ def parameters(args):
     ]
     values["overlap_seconds"] = 1
     values["saturation_threshold"] = args.limit
-    if args.attempts != 2:
-        values["attempts"] = args.attempts
     return values
 
 
@@ -165,8 +172,6 @@ def command(params, window, source):
     argv.extend(
         ["--from", window["from"], "--to", window["to"], "--output", str(source)]
     )
-    if params.get("attempts", 2) != 2:
-        argv[2:2] = ["--attempts", str(params["attempts"])]
     return argv
 
 
@@ -276,8 +281,13 @@ def restore_messages(state):
     messages = {}
     for page in state["pages"]:
         if "receipt_sha256" in page:
-            if digest(Path(page["receipt_path"]).read_bytes()) != page["receipt_sha256"]:
-                raise CollectionError("Immutable receipt checksum changed; refusing resume.")
+            if (
+                digest(Path(page["receipt_path"]).read_bytes())
+                != page["receipt_sha256"]
+            ):
+                raise CollectionError(
+                    "Immutable receipt checksum changed; refusing resume."
+                )
         if "source_sha256" not in page:
             continue
         content = Path(page["source_path"]).read_bytes()
@@ -405,7 +415,9 @@ def revalidate_rejected_page(state, messages, workspace):
         return True
     if "source_sha256" not in original and not Path(original["source_path"]).is_file():
         return True
-    expected_command = command(state["parameters"], state["remaining_window"], original["source_path"])
+    expected_command = command(
+        state["parameters"], state["remaining_window"], original["source_path"]
+    )
     legacy_command = list(expected_command)
     legacy_command[2] = "search"
     if (
@@ -415,7 +427,9 @@ def revalidate_rejected_page(state, messages, workspace):
         or original["returncode"] != 0
         or "source_sha256" not in original
     ):
-        raise CollectionError("Rejected page does not match the current successful request; refusing resume.")
+        raise CollectionError(
+            "Rejected page does not match the current successful request; refusing resume."
+        )
     receipt_content = Path(original["receipt_path"]).read_bytes()
     receipt_hash = digest(receipt_content)
     receipt = json.loads(receipt_content)
@@ -423,26 +437,36 @@ def revalidate_rejected_page(state, messages, workspace):
         not isinstance(receipt, dict)
         or type(receipt.get("returncode")) is not int
         or receipt["returncode"] != 0
-        or (
-            "receipt_sha256" in original
-            and original["receipt_sha256"] != receipt_hash
-        )
+        or ("receipt_sha256" in original and original["receipt_sha256"] != receipt_hash)
         or any(
             receipt.get(key) != original[key]
-            for key in ("window", "argv", "source_path", "stdout_path", "stderr_path", "receipt_path")
+            for key in (
+                "window",
+                "argv",
+                "source_path",
+                "stdout_path",
+                "stderr_path",
+                "receipt_path",
+            )
         )
     ):
-        raise CollectionError("Immutable receipt does not match the rejected page; refusing resume.")
+        raise CollectionError(
+            "Immutable receipt does not match the rejected page; refusing resume."
+        )
     contents = {}
     for name in ("source", "stdout", "stderr"):
         contents[name] = Path(original[f"{name}_path"]).read_bytes()
         if digest(contents[name]) != receipt.get(f"{name}_sha256"):
-            raise CollectionError("Immutable receipt checksum changed; refusing resume.")
+            raise CollectionError(
+                "Immutable receipt checksum changed; refusing resume."
+            )
     if (
         receipt["source_sha256"] != original["source_sha256"]
         or contents["stdout"].decode().strip() != original["source_path"]
     ):
-        raise CollectionError("Immutable source or stdout receipt mismatch; refusing resume.")
+        raise CollectionError(
+            "Immutable source or stdout receipt mismatch; refusing resume."
+        )
     try:
         data = json.loads(contents["source"])
         rows, dates = validate_response(data, original["window"], state["parameters"])
@@ -453,21 +477,25 @@ def revalidate_rejected_page(state, messages, workspace):
         state.update(status="unresolved", reason=str(exc), traversal_complete=False)
         checkpoint(state, messages, workspace)
         return False
-    state["pages"].append({
-        **original,
-        "accepted": True,
-        "classification": classification,
-        "revalidated_from_page": len(state["pages"]) - 1,
-        "receipt_sha256": receipt_hash,
-    })
+    state["pages"].append(
+        {
+            **original,
+            "accepted": True,
+            "classification": classification,
+            "revalidated_from_page": len(state["pages"]) - 1,
+            "receipt_sha256": receipt_hash,
+        }
+    )
     for row in rows:
         messages.setdefault((row["group_id"], row["id"]), row)
-    state["coverage"].append({
-        **covered,
-        "status": classification,
-        "source_path": original["source_path"],
-        "exhaustive": False,
-    })
+    state["coverage"].append(
+        {
+            **covered,
+            "status": classification,
+            "source_path": original["source_path"],
+            "exhaustive": False,
+        }
+    )
     state.update(remaining_window=next_window, status="running", reason=None)
     if next_window is None:
         state.update(status="traversed", traversal_complete=True)
@@ -476,7 +504,9 @@ def revalidate_rejected_page(state, messages, workspace):
 
 
 def collect(args, workspace, lock):
-    deadline = time.monotonic() + args.max_seconds
+    deadline = (
+        time.monotonic() + args.max_seconds if args.max_seconds is not None else None
+    )
     params = parameters(args)
     path = workspace / "manifest.json"
     if path.exists():
@@ -486,7 +516,9 @@ def collect(args, workspace, lock):
             )
         state = json.loads(path.read_text())
         stored_params = state.get("parameters")
-        normalized_params = dict(stored_params) if isinstance(stored_params, dict) else {}
+        normalized_params = (
+            dict(stored_params) if isinstance(stored_params, dict) else {}
+        )
         # The threshold is derived from limit; older checkpoints used a smaller cap.
         normalized_params["saturation_threshold"] = params["saturation_threshold"]
         if (
@@ -500,8 +532,12 @@ def collect(args, workspace, lock):
         if args.expected_cursor is not None:
             window = state.get("remaining_window")
             boundary = "to" if params["order"] == "desc" else "from"
-            if not isinstance(window, dict) or args.expected_cursor != window.get(boundary):
-                raise CollectionError("Expected cursor does not match the checkpoint; inspect remaining_window before resuming.")
+            if not isinstance(window, dict) or args.expected_cursor != window.get(
+                boundary
+            ):
+                raise CollectionError(
+                    "Expected cursor does not match the checkpoint; inspect remaining_window before resuming."
+                )
         state.update(parameters=params, parameter_hash=digest(encoded(params)))
         state["limitations"] = [
             SATURATION_LIMITATION if note == LEGACY_SATURATION_LIMITATION else note
@@ -523,9 +559,14 @@ def collect(args, workspace, lock):
     checkpoint(state, messages, workspace)
     if state["pending"]:
         pending = state["pending"]
-        if not Path(pending["source_path"]).is_file() and not Path(pending["receipt_path"]).is_file():
+        if (
+            not Path(pending["source_path"]).is_file()
+            and not Path(pending["receipt_path"]).is_file()
+        ):
             seal_receipt(pending, None, True)
-            state["pages"].append({**pending, "classification": "interrupted", "accepted": False})
+            state["pages"].append(
+                {**pending, "classification": "interrupted", "accepted": False}
+            )
             state["pending"] = None
             checkpoint(state, messages, workspace)
         elif not consume(state, messages, workspace):
@@ -542,15 +583,21 @@ def collect(args, workspace, lock):
             return 1
         state["pending"] = make_pending(state, workspace)
         checkpoint(state, messages, workspace)
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            state.update(status="paused", reason="Foreground time budget reached; pending window is resumable.")
+        remaining = deadline - time.monotonic() if deadline is not None else None
+        if remaining is not None and remaining <= 0:
+            state.update(
+                status="paused",
+                reason="Foreground time budget reached; pending window is resumable.",
+            )
             checkpoint(state, messages, workspace)
             return 2
         try:
             invoke(state["pending"], lock, remaining)
         except subprocess.TimeoutExpired:
-            state.update(status="paused", reason="Foreground time budget reached; child stopped and pending receipt will be inspected on resume.")
+            state.update(
+                status="paused",
+                reason="Foreground time budget reached; child stopped and pending receipt will be inspected on resume.",
+            )
             checkpoint(state, messages, workspace)
             return 2
         except (OSError, KeyboardInterrupt):
@@ -583,7 +630,9 @@ def run_collection(args):
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise CollectionError("This workspace is already being collected.") from None
+            raise CollectionError(
+                "This workspace is already being collected."
+            ) from None
         for name in ("raw", "receipts"):
             (workspace / name).mkdir(exist_ok=True)
         previous_handler = signal.signal(signal.SIGTERM, interrupt_collection)
@@ -601,7 +650,10 @@ def main(argv=None):
         path = workspace / "manifest.json"
         code = run_collection(args)
         if code:
-            print("Collection is incomplete; inspect the manifest reason and remaining_window.", file=sys.stderr)
+            print(
+                "Collection is incomplete; inspect the manifest reason and remaining_window.",
+                file=sys.stderr,
+            )
     except (CollectionError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         code = 1

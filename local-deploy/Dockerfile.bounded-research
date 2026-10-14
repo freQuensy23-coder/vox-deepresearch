@@ -1,7 +1,0 @@
-FROM local/vox-deepresearch-gateway:system-repair-20261011
-COPY backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py /app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py
-COPY backend/packages/harness/deerflow/agents/middlewares/graph_budget_middleware.py /app/backend/packages/harness/deerflow/agents/middlewares/graph_budget_middleware.py
-COPY backend/packages/harness/deerflow/agents/lead_agent/agent.py /app/backend/packages/harness/deerflow/agents/lead_agent/agent.py
-COPY backend/packages/harness/deerflow/runtime/runs/worker.py /app/backend/packages/harness/deerflow/runtime/runs/worker.py
-COPY backend/packages/harness/deerflow/community/aio_sandbox/remote_backend.py /app/backend/packages/harness/deerflow/community/aio_sandbox/remote_backend.py
-COPY backend/packages/harness/deerflow/community/aio_sandbox/aio_sandbox_provider.py /app/backend/packages/harness/deerflow/community/aio_sandbox/aio_sandbox_provider.py

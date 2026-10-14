@@ -21,11 +21,8 @@ spec.loader.exec_module(vox)
 
 
 @pytest.fixture(autouse=True)
-def isolated_working_directory(monkeypatch, tmp_path, tmp_path_factory):
+def isolated_working_directory(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv(
-        "VOX_ADMISSION_DIR", str(tmp_path_factory.mktemp("vox-admission"))
-    )
 
 
 @pytest.fixture
@@ -206,12 +203,15 @@ def test_search_stream_without_final_result_is_not_an_empty_success(transport, b
     responses.extend([body, body])
     with pytest.raises(SystemExit):
         invoke(["search-page", "work"])
-    assert len(requests) == (1 if b'"error"' in body else 2)
+    assert len(requests) == 1
 
 
-def test_search_retries_a_stream_closed_after_progress(transport, capsys):
+def test_agent_can_explicitly_retry_a_stream_closed_after_progress(transport, capsys):
     requests, responses = transport
     responses.extend([b'{"point":0}\n', {"messages": [{"id": 7}], "count": 1}])
+    with pytest.raises(SystemExit):
+        invoke(["search-page", "work"])
+    assert len(requests) == 1
     out = run_cli(capsys, "search-page", "work")
     assert out["messages"][0]["id"] == 7
     assert len(requests) == 2
@@ -419,7 +419,7 @@ def test_secrets_missing_and_errors_do_not_dump_response(
         invoke(["search-page", "abc"])
 
 
-def test_single_attempt_can_be_requested_explicitly(transport):
+def test_failed_request_is_not_implicitly_retried(transport):
     requests, responses = transport
     responses.append(
         urllib.error.HTTPError(
@@ -427,31 +427,29 @@ def test_single_attempt_can_be_requested_explicitly(transport):
         )
     )
     with pytest.raises(SystemExit):
-        invoke(["--attempts", "1", "search-page", "abc"])
+        invoke(["search-page", "abc"])
     assert len(requests) == 1
 
 
-def test_disconnect_is_retried_once_with_a_visible_diagnostic(transport, capsys):
+def test_disconnect_is_reported_without_hidden_retry(transport, capsys):
     requests, responses = transport
     responses.extend(
         [ConnectionResetError(), {"messages": [{"id": 9, "text": "work"}], "count": 1}]
     )
-    invoke(["search-page", "work"])
+    with pytest.raises(SystemExit):
+        invoke(["search-page", "work"])
     captured = capsys.readouterr()
-    saved = json.loads(Path(captured.out.strip()).read_text(encoding="utf-8"))
-    assert saved["messages"][0]["id"] == 9
-    assert "retry" in captured.err.lower()
+    assert "Network/timeout" in captured.err
     assert "synthetic-test-credential" not in captured.err
-    assert len(requests) == 2
-    assert requests[0].full_url == requests[1].full_url
+    assert len(requests) == 1
 
 
-def test_transient_retry_is_bounded(transport):
+def test_timeout_is_reported_without_hidden_retry(transport):
     requests, responses = transport
     responses.extend([TimeoutError(), TimeoutError()])
     with pytest.raises(SystemExit):
         invoke(["search-page", "work"])
-    assert len(requests) == 2
+    assert len(requests) == 1
 
 
 def test_scoped_search_checks_public_card_and_preserves_zero_params(transport, capsys):

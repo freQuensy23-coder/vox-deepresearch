@@ -6,13 +6,12 @@ import math
 import os
 import re
 import sys
-import time
 from collections import Counter
 from pathlib import Path
 
 
-MAX_BYTES = 256 * 1024
-MAX_ITEMS = 50
+MAX_BYTES = 16 * 1024 * 1024
+MAX_ITEMS = 10000
 MODELS = {"jev-latest", "jev-preview", "jev-1.13.0"}
 BATCH_ID = re.compile(r"batch_[a-f0-9]{32}\Z")
 
@@ -23,7 +22,9 @@ class ClientError(Exception):
 
 def encode(value):
     try:
-        return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+        return json.dumps(
+            value, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        ).encode("utf-8")
     except (ValueError, TypeError, UnicodeError, RecursionError):
         raise ClientError("invalid_json") from None
 
@@ -37,7 +38,12 @@ def validate_body(body):
     if not isinstance(questions, dict) or not 1 <= len(questions) <= 16:
         raise ClientError("invalid_questions")
     for name, question in questions.items():
-        if not isinstance(name, str) or not name or len(name) > 128 or not isinstance(question, dict):
+        if (
+            not isinstance(name, str)
+            or not name
+            or len(name) > 128
+            or not isinstance(question, dict)
+        ):
             raise ClientError("invalid_questions")
         if set(question) - {"type", "instructions", "criteria"}:
             raise ClientError("invalid_questions")
@@ -45,11 +51,19 @@ def validate_body(body):
         criteria = question.get("criteria")
         if kind not in {"noul", "choice", "score"}:
             raise ClientError("invalid_questions")
-        if kind == "choice" and (not isinstance(criteria, dict) or not 1 <= len(criteria) <= 32):
+        if kind == "choice" and (
+            not isinstance(criteria, dict) or not 1 <= len(criteria) <= 32
+        ):
             raise ClientError("invalid_questions")
-        if kind == "score" and (not isinstance(criteria, list) or not 1 <= len(criteria) <= 32):
+        if kind == "score" and (
+            not isinstance(criteria, list) or not 1 <= len(criteria) <= 32
+        ):
             raise ClientError("invalid_questions")
-        if kind == "noul" and criteria is not None and (not isinstance(criteria, dict) or set(criteria) - {"true", "false"}):
+        if (
+            kind == "noul"
+            and criteria is not None
+            and (not isinstance(criteria, dict) or set(criteria) - {"true", "false"})
+        ):
             raise ClientError("invalid_questions")
     if len(encode(body)) > MAX_BYTES:
         raise ClientError("request_too_large")
@@ -57,8 +71,18 @@ def validate_body(body):
 
 
 def requests_for(data):
-    if not isinstance(data, dict) or set(data) - {"items", "questions", "model"}:
+    if not isinstance(data, dict) or set(data) - {
+        "items",
+        "questions",
+        "model",
+        "policy",
+    }:
         raise ClientError("invalid_input")
+    if "policy" in data and (
+        not isinstance(data["policy"], dict)
+        or data["policy"].get("allow_paid", False) is not False
+    ):
+        raise ClientError("invalid_policy")
     items = data.get("items")
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_ITEMS:
         raise ClientError("invalid_items")
@@ -71,7 +95,13 @@ def requests_for(data):
         if not isinstance(key, str) or not key or len(key) > 256 or key in seen:
             raise ClientError("invalid_ids")
         seen.add(key)
-        body = validate_body({"model": data.get("model", "jev-latest"), "state": item["state"], "questions": data.get("questions")})
+        body = validate_body(
+            {
+                "model": data.get("model", "jev-latest"),
+                "state": item["state"],
+                "questions": data.get("questions"),
+            }
+        )
         result.append({"custom_id": key, "body": body})
     return result
 
@@ -86,7 +116,10 @@ def validate_response(raw, questions):
         if raw["model"] not in MODELS or set(raw["answers"]) != set(questions):
             raise ValueError()
         usage = raw["usage"]
-        if any(type(usage[k]) is not int or usage[k] < 0 for k in ("input_tokens", "output_tokens")):
+        if any(
+            type(usage[k]) is not int or usage[k] < 0
+            for k in ("input_tokens", "output_tokens")
+        ):
             raise ValueError()
         for key, question in questions.items():
             answer = raw["answers"][key]
@@ -98,17 +131,33 @@ def validate_response(raw, questions):
                     raise ValueError()
                 continue
             probabilities = answer["probabilities"]
-            if not isinstance(probabilities, dict) or not probabilities or not all(probability(v) for v in probabilities.values()):
+            if (
+                not isinstance(probabilities, dict)
+                or not probabilities
+                or not all(probability(v) for v in probabilities.values())
+            ):
                 raise ValueError()
-            if not probability(answer["confidence"]) or not math.isclose(sum(probabilities.values()), 1, abs_tol=0.02):
+            if not probability(answer["confidence"]) or not math.isclose(
+                sum(probabilities.values()), 1, abs_tol=0.02
+            ):
                 raise ValueError()
             if kind == "choice":
-                if set(probabilities) != set(question["criteria"]) or answer["choice"] not in probabilities or probabilities[answer["choice"]] < max(probabilities.values()):
+                if (
+                    set(probabilities) != set(question["criteria"])
+                    or answer["choice"] not in probabilities
+                    or probabilities[answer["choice"]] < max(probabilities.values())
+                ):
                     raise ValueError()
             else:
                 legend = {str(i): value for i, value in enumerate(question["criteria"])}
                 score = answer["score"]
-                if answer["legend"] != legend or set(probabilities) != set(legend) or type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= len(legend) - 1:
+                if (
+                    answer["legend"] != legend
+                    or set(probabilities) != set(legend)
+                    or type(score) not in (int, float)
+                    or not math.isfinite(score)
+                    or not 0 <= score <= len(legend) - 1
+                ):
                     raise ValueError()
     except (KeyError, TypeError, ValueError, ClientError):
         raise ClientError("invalid_response") from None
@@ -118,12 +167,17 @@ def validate_response(raw, questions):
 def request(method, path, body=None):
     connection = http.client.HTTPConnection("jev-bridge", 8084, timeout=140)
     try:
-        connection.request(method, path, body=encode(body) if body is not None else None, headers={"Content-Type": "application/json"})
+        connection.request(
+            method,
+            path,
+            body=encode(body) if body is not None else None,
+            headers={"Content-Type": "application/json"},
+        )
         response = connection.getresponse()
-        raw = response.read(4 * 1024 * 1024 + 1)
+        raw = response.read(MAX_BYTES + 1)
         if response.status not in (200, 202):
             raise ClientError(f"http_{response.status}")
-        if len(raw) > 4 * 1024 * 1024:
+        if len(raw) > MAX_BYTES:
             raise ClientError("response_too_large")
         return json.loads(raw)
     except (OSError, http.client.HTTPException):
@@ -137,29 +191,51 @@ def request(method, path, body=None):
 def evaluate(data, call=request):
     entries = requests_for(data)
     results = []
-    deadline = time.monotonic() + 300
     for entry in entries:
-        row = {"id": entry["custom_id"], "status": "error", "response": None, "error": "deadline"}
-        if time.monotonic() < deadline:
-            try:
-                row["response"] = validate_response(call("POST", "/v1/systemone", entry["body"]), entry["body"]["questions"])
-                row.update(status="ok", error=None)
-            except ClientError as error:
-                row["error"] = str(error)
+        row = {
+            "id": entry["custom_id"],
+            "status": "error",
+            "response": None,
+            "error": None,
+        }
+        try:
+            row["response"] = validate_response(
+                call("POST", "/v1/systemone", entry["body"]), entry["body"]["questions"]
+            )
+            row.update(status="ok", error=None)
+        except ClientError as error:
+            row["error"] = str(error)
         results.append(row)
-    return {"heuristic_only": True, "total": len(results), "counts": dict(Counter(row["status"] for row in results)), "results": results}
+    return {
+        "heuristic_only": True,
+        "total": len(results),
+        "counts": dict(Counter(row["status"] for row in results)),
+        "results": results,
+    }
 
 
 def submit(data, call=request, persist=None):
     entries = requests_for(data)
-    body = {"requests": entries, "policy": {"allow_paid": False, "free_wait_seconds": 600, "concurrency": 1}}
+    body = {
+        "requests": entries,
+        "policy": {**data.get("policy", {}), "allow_paid": False},
+    }
     if len(encode(body)) > MAX_BYTES:
         raise ClientError("batch_too_large")
     metadata = call("POST", "/v1/batches", body)
     batch_id = metadata.get("id")
-    if not isinstance(batch_id, str) or not BATCH_ID.fullmatch(batch_id) or metadata.get("total") != len(entries):
+    if (
+        not isinstance(batch_id, str)
+        or not BATCH_ID.fullmatch(batch_id)
+        or metadata.get("total") != len(entries)
+    ):
         raise ClientError("invalid_batch_response")
-    handle = {"id": batch_id, "ids": [row["custom_id"] for row in entries], "questions": data["questions"], "submission": metadata}
+    handle = {
+        "id": batch_id,
+        "ids": [row["custom_id"] for row in entries],
+        "questions": data["questions"],
+        "submission": metadata,
+    }
     if persist:
         persist(handle)
     readback = call("GET", "/v1/batches/" + batch_id)
@@ -171,7 +247,14 @@ def submit(data, call=request, persist=None):
 def collect(handle, call=request):
     batch_id = handle.get("id")
     ids = handle.get("ids")
-    if not isinstance(batch_id, str) or not BATCH_ID.fullmatch(batch_id) or not isinstance(ids, list) or not 1 <= len(ids) <= MAX_ITEMS or any(not isinstance(key, str) for key in ids) or len(set(ids)) != len(ids):
+    if (
+        not isinstance(batch_id, str)
+        or not BATCH_ID.fullmatch(batch_id)
+        or not isinstance(ids, list)
+        or not 1 <= len(ids) <= MAX_ITEMS
+        or any(not isinstance(key, str) for key in ids)
+        or len(set(ids)) != len(ids)
+    ):
         raise ClientError("invalid_handle")
     metadata = call("GET", "/v1/batches/" + batch_id)
     if metadata.get("total") != len(ids):
@@ -179,9 +262,16 @@ def collect(handle, call=request):
     rows = []
     while True:
         offset = len(rows)
-        page = call("GET", f"/v1/batches/{batch_id}/results?offset={offset}&limit=50")
+        page = call("GET", f"/v1/batches/{batch_id}/results?offset={offset}&limit=1000")
         values = page.get("results")
-        if page.get("total") != len(ids) or page.get("offset") != offset or not isinstance(values, list) or not values or len(values) > len(ids) - offset or type(page.get("has_more")) is not bool:
+        if (
+            page.get("total") != len(ids)
+            or page.get("offset") != offset
+            or not isinstance(values, list)
+            or not values
+            or len(values) > len(ids) - offset
+            or type(page.get("has_more")) is not bool
+        ):
             raise ClientError("invalid_batch_page")
         rows.extend(values)
         if not page["has_more"]:
@@ -195,9 +285,20 @@ def collect(handle, call=request):
             try:
                 validate_response(row["response"], handle["questions"])
             except ClientError:
-                row.update(status_code=502, response=None, error={"type": "invalid_response"})
-    complete = metadata.get("status") in ("completed", "cancelled") and all(row.get("status_code") is not None for row in rows)
-    return {"heuristic_only": True, "id": batch_id, "total": len(ids), "complete": complete, "metadata": metadata, "results": rows}
+                row.update(
+                    status_code=502, response=None, error={"type": "invalid_response"}
+                )
+    complete = metadata.get("status") in ("completed", "cancelled") and all(
+        row.get("status_code") is not None for row in rows
+    )
+    return {
+        "heuristic_only": True,
+        "id": batch_id,
+        "total": len(ids),
+        "complete": complete,
+        "metadata": metadata,
+        "results": rows,
+    }
 
 
 def cancel(handle, call=request):
@@ -221,7 +322,9 @@ def save(path, data):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Bounded typed Jev evaluations; outputs are heuristics, not evidence. Never overwrites files.")
+    parser = argparse.ArgumentParser(
+        description="Bounded typed Jev evaluations; outputs are heuristics, not evidence. Never overwrites files."
+    )
     parser.add_argument("mode", choices=("evaluate", "submit", "collect", "cancel"))
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
@@ -229,17 +332,26 @@ def main():
     target = Path(args.output).resolve()
     try:
         raw = Path(args.input).read_bytes()
-        if len(raw) > 2 * 1024 * 1024:
+        if len(raw) > MAX_BYTES:
             raise ClientError("input_too_large")
         data = json.loads(raw)
         if target.exists():
             raise ClientError("output_exists")
-        receipt = {"input": str(Path(args.input).resolve()), "input_sha256": hashlib.sha256(raw).hexdigest(), "mode": args.mode}
+        receipt = {
+            "input": str(Path(args.input).resolve()),
+            "input_sha256": hashlib.sha256(raw).hexdigest(),
+            "mode": args.mode,
+        }
         save(str(target) + ".request.json", receipt)
         if args.mode == "evaluate":
             result = evaluate(data)
         elif args.mode == "submit":
-            result = submit(data, persist=lambda handle: save(str(target) + ".handle.json", {**handle, **receipt}))
+            result = submit(
+                data,
+                persist=lambda handle: save(
+                    str(target) + ".handle.json", {**handle, **receipt}
+                ),
+            )
         elif args.mode == "collect":
             result = collect(data)
         else:
@@ -248,7 +360,10 @@ def main():
         print(target)
         return 1 if args.mode == "evaluate" and result["counts"].get("error") else 0
     except (ClientError, OSError, ValueError, TypeError) as error:
-        print(str(error) if isinstance(error, ClientError) else "local_file_error", file=sys.stderr)
+        print(
+            str(error) if isinstance(error, ClientError) else "local_file_error",
+            file=sys.stderr,
+        )
         return 2
 
 

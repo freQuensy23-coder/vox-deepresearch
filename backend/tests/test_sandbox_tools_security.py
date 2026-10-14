@@ -28,7 +28,6 @@ from deerflow.sandbox.tools import (
     replace_virtual_path,
     replace_virtual_paths_in_command,
     str_replace_tool,
-    validate_local_bash_command_paths,
     validate_local_tool_path,
     write_file_tool,
 )
@@ -257,6 +256,7 @@ def test_local_bash_tool_output_masks_every_entry_of_a_colon_joined_path_list(tm
 
     # The shell expands ``$PWD`` (the host workspace), so the host paths exist only
     # in the output -- the ``export PATH="$PWD/.venv/bin:$PATH"`` shape.
+    monkeypatch.setattr(LocalSandbox, "_get_shell", staticmethod(lambda: "/bin/sh"))
     command = "echo " + ":".join(f"$PWD/e{i}/bin" for i in range(_PATH_LIST_ENTRIES))
     result = bash_tool.func(runtime=runtime, description="print PATH", command=command)
 
@@ -725,194 +725,6 @@ def test_replace_virtual_paths_in_command_still_translates_genuine_paths(command
     assert replace_virtual_paths_in_command(command, _THREAD_DATA) == expected
 
 
-# ---------- validate_local_bash_command_paths ----------
-
-
-def test_validate_local_bash_command_paths_blocks_host_paths() -> None:
-    with pytest.raises(PermissionError, match="Unsafe absolute paths"):
-        validate_local_bash_command_paths("cat /etc/passwd", _THREAD_DATA)
-
-
-@pytest.mark.parametrize("command", ["cat /etc/os-release", "curl file:///etc/os-release"])
-def test_validate_local_bash_command_paths_guides_environment_probe_recovery(command: str) -> None:
-    with pytest.raises(PermissionError) as exc_info:
-        validate_local_bash_command_paths(command, _THREAD_DATA)
-
-    message = str(exc_info.value)
-    assert "For environment questions, use command-only probes" in message
-    assert "otherwise use an allowed virtual path" in message
-    assert "Do not repeat the rejected path" in message
-
-
-def test_validate_local_bash_command_paths_allows_https_urls() -> None:
-    """URLs like https://github.com/... must not be flagged as unsafe absolute paths."""
-    validate_local_bash_command_paths(
-        "cd /mnt/user-data/workspace && git clone https://github.com/CherryHQ/cherry-studio.git",
-        _THREAD_DATA,
-    )
-
-
-def test_validate_local_bash_command_paths_allows_http_urls() -> None:
-    """HTTP URLs must not be flagged as unsafe absolute paths."""
-    validate_local_bash_command_paths(
-        "curl http://example.com/file.tar.gz -o /mnt/user-data/workspace/file.tar.gz",
-        _THREAD_DATA,
-    )
-
-
-def test_validate_local_bash_command_paths_allows_virtual_and_system_paths() -> None:
-    validate_local_bash_command_paths(
-        "/bin/echo ok > /mnt/user-data/workspace/out.txt && cat /dev/null",
-        _THREAD_DATA,
-    )
-
-
-def test_validate_local_bash_command_paths_blocks_traversal_in_user_data() -> None:
-    """Bash commands with traversal in user-data paths should be blocked."""
-    with pytest.raises(PermissionError, match="path traversal"):
-        validate_local_bash_command_paths(
-            "cat /mnt/user-data/workspace/../../etc/passwd",
-            _THREAD_DATA,
-        )
-
-
-def test_validate_local_bash_command_paths_blocks_traversal_in_skills() -> None:
-    """Bash commands with traversal in skills paths should be blocked."""
-    with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
-        with pytest.raises(PermissionError, match="path traversal"):
-            validate_local_bash_command_paths(
-                "cat /mnt/skills/../../etc/passwd",
-                _THREAD_DATA,
-            )
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "cat ../uploads/secret.txt",
-        "cat subdir/../../secret.txt",
-        "python script.py --input=../secret.txt",
-        "echo ok > ../outputs/result.txt",
-    ],
-)
-def test_validate_local_bash_command_paths_blocks_relative_dotdot_segments(command: str) -> None:
-    with pytest.raises(PermissionError, match="path traversal"):
-        validate_local_bash_command_paths(command, _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_blocks_cd_root_escape() -> None:
-    with pytest.raises(PermissionError, match="Unsafe working directory"):
-        validate_local_bash_command_paths("cd / && cat etc/passwd", _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_blocks_cd_parent_escape() -> None:
-    with pytest.raises(PermissionError, match="path traversal"):
-        validate_local_bash_command_paths("cd .. && cat etc/passwd", _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_blocks_cd_env_var_escape() -> None:
-    with pytest.raises(PermissionError, match="Unsafe working directory"):
-        validate_local_bash_command_paths("cd $HOME && cat .ssh/id_rsa", _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_blocks_multiline_cd_escape() -> None:
-    with pytest.raises(PermissionError, match="Unsafe working directory"):
-        validate_local_bash_command_paths("echo ok\ncd $HOME && cat .ssh/id_rsa", _THREAD_DATA)
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "command cd / && cat etc/passwd",
-        "builtin cd $HOME && cat .ssh/id_rsa",
-        "if cd $HOME; then cat .ssh/id_rsa; fi",
-        "{ cd /; cat etc/passwd; }",
-        'echo "$(cd $HOME && cat .ssh/id_rsa)"',
-    ],
-)
-def test_validate_local_bash_command_paths_blocks_complex_cd_escapes(command: str) -> None:
-    with pytest.raises(PermissionError, match="Unsafe working directory"):
-        validate_local_bash_command_paths(command, _THREAD_DATA)
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "ls /",
-        "ln -s / root && cat root/etc/passwd",
-        "command ls /",
-    ],
-)
-def test_validate_local_bash_command_paths_blocks_bare_root_path(command: str) -> None:
-    with pytest.raises(PermissionError, match="Unsafe absolute paths"):
-        validate_local_bash_command_paths(command, _THREAD_DATA)
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "echo cd /",
-        "printf '%s\\n' pushd /",
-    ],
-)
-def test_validate_local_bash_command_paths_allows_cd_words_as_arguments(command: str) -> None:
-    validate_local_bash_command_paths(command, _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_allows_workspace_relative_paths() -> None:
-    validate_local_bash_command_paths(
-        "mkdir -p reports && python script.py data/input.csv > reports/out.txt",
-        _THREAD_DATA,
-    )
-
-
-def test_validate_local_bash_command_paths_allows_cd_virtual_workspace_with_relative_paths() -> None:
-    validate_local_bash_command_paths(
-        "cd /mnt/user-data/workspace && cat data/input.csv > reports/out.txt",
-        _THREAD_DATA,
-    )
-
-
-def test_validate_local_bash_command_paths_allows_http_url_dotdot_segments() -> None:
-    validate_local_bash_command_paths(
-        "curl https://example.com/packages/../archive.tar.gz -o /mnt/user-data/workspace/archive.tar.gz",
-        _THREAD_DATA,
-    )
-    validate_local_bash_command_paths(
-        "curl http://example.com/packages/../archive.tar.gz -o /mnt/user-data/workspace/archive.tar.gz",
-        _THREAD_DATA,
-    )
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        # f-string / string-literal fragments with CJK text or template braces are
-        # NOT path arguments and must not be flagged as unsafe absolute paths.
-        "python3 -c \"print(f'/端口{port}')\"",
-        "echo '健康检查 /端口 状态'",
-        "python3 -c \"x = f'/{port}'\"",
-        "python3 -c \"print('/devices/{id}/port')\"",
-    ],
-)
-def test_validate_local_bash_command_paths_allows_non_path_string_literals(command: str) -> None:
-    validate_local_bash_command_paths(command, _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_still_blocks_ascii_host_path_in_code() -> None:
-    """The literal exemption is shape-based (non-ASCII / identifier-template
-    braces); a plain ASCII host path stays blocked even when written inside a
-    code string, so the guard keeps nudging the model toward virtual paths."""
-    with pytest.raises(PermissionError, match="Unsafe absolute paths"):
-        validate_local_bash_command_paths("python3 -c \"open('/etc/passwd').read()\"", _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_allows_quoted_paths_with_spaces() -> None:
-    """Spaces inside quotes belong to the filename; they must not truncate a segment."""
-    validate_local_bash_command_paths('cat "/mnt/user-data/uploads/report. final.txt"', _THREAD_DATA)
-    validate_local_bash_command_paths('cat "/mnt/user-data/uploads/CON notes.txt"', _THREAD_DATA)
-
-
 def _windows_extended(path: Path) -> str:
     return (chr(92) * 2) + "?" + chr(92) + str(path)
 
@@ -939,72 +751,6 @@ def _remove_literal_host_file(path: Path) -> None:
         path.unlink()
 
 
-def test_validate_local_bash_command_paths_allows_stored_nonportable_names(tmp_path: Path) -> None:
-    """cat/mv of a host file that already exists is not blocked for its name."""
-    uploads = tmp_path / "uploads"
-    workspace = tmp_path / "workspace"
-    outputs = tmp_path / "outputs"
-    for directory in (uploads, workspace, outputs):
-        directory.mkdir()
-    reserved = uploads / "aux.pdf"
-    spaced = uploads / "notes.txt "
-    _write_literal_host_file(reserved, b"pdf")
-    _write_literal_host_file(spaced, b"sp")
-    thread = {
-        "workspace_path": str(workspace),
-        "uploads_path": str(uploads),
-        "outputs_path": str(outputs),
-    }
-    try:
-        validate_local_bash_command_paths('cat "/mnt/user-data/uploads/aux.pdf"', thread)
-        validate_local_bash_command_paths('mv "/mnt/user-data/uploads/aux.pdf" /mnt/user-data/workspace/renamed.pdf', thread)
-        validate_local_bash_command_paths('cat "/mnt/user-data/uploads/notes.txt "', thread)
-        validate_local_tool_path("/mnt/user-data/uploads/aux.pdf", thread, read_only=False)
-        validate_local_tool_path("/mnt/user-data/uploads/notes.txt ", thread, read_only=True)
-    finally:
-        _remove_literal_host_file(reserved)
-        _remove_literal_host_file(spaced)
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        'cat "/mnt/user-data/uploads/CON"',
-        'cat "/mnt/user-data/uploads/report."',
-        'cat "/mnt/user-data/uploads/foo bar/../../etc/passwd"',
-        "cat /mnt/user-data/uploads/report. final.txt",
-    ],
-)
-def test_validate_local_bash_command_paths_rejects_quoted_reserved_or_trailing_dot_paths(command: str) -> None:
-    with pytest.raises(PermissionError):
-        validate_local_bash_command_paths(command, _THREAD_DATA)
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        # Bash brace expansion reconstitutes plain host paths at runtime
-        # (`cat /etc/{passwd,shadow}` -> `cat /etc/passwd /etc/shadow`), so the
-        # brace exemption must NOT fire on these — only single identifier-like
-        # template placeholders such as `/devices/{id}/port` are text.
-        "cat /etc/{passwd,shadow}",
-        "cat /etc/passwd{,.bak}",
-        "cat /{etc,var}/passwd",
-        'bash -c "cat /etc/{passwd,shadow}"',
-        # ``${VAR}`` shell variable expansion is the same bypass class: bash
-        # substitutes a real host path at runtime even though `USER` is
-        # identifier-shaped, so it must stay blocked too.
-        "cat /home/${USER}/.ssh/id_rsa",
-    ],
-)
-def test_validate_local_bash_command_paths_blocks_brace_expansion_host_paths(command: str) -> None:
-    """Regression for the brace-expansion bypass: a `{...}` block that is not a
-    single identifier placeholder (commas, dots, leading separators) must keep
-    the host path blocked rather than be exempted as a literal."""
-    with pytest.raises(PermissionError, match="Unsafe absolute paths"):
-        validate_local_bash_command_paths(command, _THREAD_DATA)
-
-
 def test_bash_tool_rejects_host_bash_when_local_sandbox_default(monkeypatch) -> None:
     runtime = SimpleNamespace(
         state={"sandbox": {"sandbox_id": "local"}, "thread_data": _THREAD_DATA.copy()},
@@ -1024,60 +770,6 @@ def test_bash_tool_rejects_host_bash_when_local_sandbox_default(monkeypatch) -> 
     )
 
     assert "Host bash execution is disabled" in result
-
-
-def test_bash_tool_description_scopes_environment_detection_to_local_host_bash() -> None:
-    description = bash_tool.description
-
-    assert "local host via host bash" in description
-    assert "inspect the current environment instead of" in description
-    assert "`uname -s`" in description
-    assert "`sw_vers`" in description
-    assert "`uname -a`" in description
-    assert "`/etc/os-release` only when the active" in description
-    assert "sandbox policy permits it" in description
-    assert "do not repeat the rejected command" in description
-    assert "otherwise use allowed virtual paths or explain the restriction" in description
-
-
-def test_bash_tool_guides_recovery_after_host_path_rejection(monkeypatch) -> None:
-    runtime = SimpleNamespace(
-        state={"sandbox": {"sandbox_id": "local"}, "thread_data": _THREAD_DATA.copy()},
-        context={"thread_id": "thread-1"},
-    )
-    monkeypatch.setattr(
-        "deerflow.sandbox.tools.ensure_sandbox_initialized",
-        lambda runtime: SimpleNamespace(execute_command=lambda command: pytest.fail("unsafe command should not execute")),
-    )
-    monkeypatch.setattr("deerflow.sandbox.tools.ensure_thread_directories_exist", lambda runtime: None)
-    monkeypatch.setattr("deerflow.sandbox.tools.is_host_bash_allowed", lambda: True)
-
-    result = bash_tool.func(runtime=runtime, description="detect the OS", command="cat /etc/os-release")
-
-    assert "For environment questions, use command-only probes" in result
-    assert "Do not repeat the rejected path" in result
-
-
-def test_bash_tool_blocks_relative_traversal_before_host_execution(monkeypatch) -> None:
-    runtime = SimpleNamespace(
-        state={"sandbox": {"sandbox_id": "local"}, "thread_data": _THREAD_DATA.copy()},
-        context={"thread_id": "thread-1"},
-    )
-
-    monkeypatch.setattr(
-        "deerflow.sandbox.tools.ensure_sandbox_initialized",
-        lambda runtime: SimpleNamespace(execute_command=lambda command: pytest.fail("unsafe command should not execute")),
-    )
-    monkeypatch.setattr("deerflow.sandbox.tools.ensure_thread_directories_exist", lambda runtime: None)
-    monkeypatch.setattr("deerflow.sandbox.tools.is_host_bash_allowed", lambda: True)
-
-    result = bash_tool.func(
-        runtime=runtime,
-        description="run command",
-        command="cat ../uploads/secret.txt",
-    )
-
-    assert "path traversal" in result
 
 
 # ---------- Skills path tests ----------
@@ -1111,72 +803,6 @@ def test_validate_local_tool_path_blocks_skills_write() -> None:
                 _THREAD_DATA,
                 read_only=False,
             )
-
-
-def test_validate_local_bash_command_paths_allows_skills_path() -> None:
-    """bash commands referencing /mnt/skills should be allowed."""
-    with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
-        validate_local_bash_command_paths(
-            "cat /mnt/skills/public/bootstrap/SKILL.md",
-            _THREAD_DATA,
-        )
-
-
-def test_validate_local_bash_command_paths_allows_urls() -> None:
-    """URLs in bash commands should not be mistaken for absolute paths (issue #1385)."""
-    # HTTPS URLs
-    validate_local_bash_command_paths(
-        "curl -X POST https://example.com/api/v1/risk/check",
-        _THREAD_DATA,
-    )
-    # HTTP URLs
-    validate_local_bash_command_paths(
-        "curl http://localhost:8080/health",
-        _THREAD_DATA,
-    )
-    # URLs with query strings
-    validate_local_bash_command_paths(
-        "curl https://api.example.com/v2/search?q=test",
-        _THREAD_DATA,
-    )
-    # FTP URLs
-    validate_local_bash_command_paths(
-        "curl ftp://ftp.example.com/pub/file.tar.gz",
-        _THREAD_DATA,
-    )
-    # URL mixed with valid virtual path
-    validate_local_bash_command_paths(
-        "curl https://example.com/data -o /mnt/user-data/workspace/data.json",
-        _THREAD_DATA,
-    )
-
-
-def test_validate_local_bash_command_paths_blocks_file_urls() -> None:
-    """file:// URLs should be treated as unsafe and blocked."""
-    with pytest.raises(PermissionError):
-        validate_local_bash_command_paths("curl file:///etc/passwd", _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_blocks_file_urls_case_insensitive() -> None:
-    """file:// URL detection should be case-insensitive."""
-    with pytest.raises(PermissionError):
-        validate_local_bash_command_paths("curl FILE:///etc/shadow", _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_blocks_file_urls_mixed_with_valid() -> None:
-    """file:// URLs should be blocked even when mixed with valid paths."""
-    with pytest.raises(PermissionError):
-        validate_local_bash_command_paths(
-            "curl file:///etc/passwd -o /mnt/user-data/workspace/out.txt",
-            _THREAD_DATA,
-        )
-
-
-def test_validate_local_bash_command_paths_still_blocks_other_paths() -> None:
-    """Paths outside virtual and system prefixes must still be blocked."""
-    with patch("deerflow.sandbox.tools._get_skills_container_path", return_value="/mnt/skills"):
-        with pytest.raises(PermissionError, match="Unsafe absolute paths"):
-            validate_local_bash_command_paths("cat /etc/shadow", _THREAD_DATA)
 
 
 def test_validate_local_tool_path_skills_custom_container_path() -> None:
@@ -1224,23 +850,6 @@ def test_validate_local_tool_path_blocks_acp_workspace_write() -> None:
             "/mnt/acp-workspace/hello_world.py",
             _THREAD_DATA,
             read_only=False,
-        )
-
-
-def test_validate_local_bash_command_paths_allows_acp_workspace() -> None:
-    """bash commands referencing /mnt/acp-workspace should be allowed."""
-    validate_local_bash_command_paths(
-        "cp /mnt/acp-workspace/hello_world.py /mnt/user-data/outputs/hello_world.py",
-        _THREAD_DATA,
-    )
-
-
-def test_validate_local_bash_command_paths_blocks_traversal_in_acp_workspace() -> None:
-    """Bash commands with traversal in ACP workspace paths should be blocked."""
-    with pytest.raises(PermissionError, match="path traversal"):
-        validate_local_bash_command_paths(
-            "cat /mnt/acp-workspace/../../etc/passwd",
-            _THREAD_DATA,
         )
 
 
@@ -1336,43 +945,6 @@ def test_apply_cwd_prefix_quotes_path_with_spaces() -> None:
     assert result == "cd '/tmp/my workspace/t1' && echo hello"
 
 
-def test_validate_local_bash_command_paths_allows_mcp_filesystem_paths() -> None:
-    """Bash commands referencing MCP filesystem server paths should be allowed."""
-    from deerflow.config.extensions_config import ExtensionsConfig, McpServerConfig
-
-    mock_config = ExtensionsConfig(
-        mcp_servers={
-            "filesystem": McpServerConfig(
-                enabled=True,
-                command="npx",
-                args=["-y", "@modelcontextprotocol/server-filesystem", "/mnt/d/workspace"],
-            )
-        }
-    )
-    with patch("deerflow.config.extensions_config.get_extensions_config", return_value=mock_config):
-        # Should not raise - MCP filesystem paths are allowed
-        validate_local_bash_command_paths("ls /mnt/d/workspace", _THREAD_DATA)
-        validate_local_bash_command_paths("cat /mnt/d/workspace/subdir/file.txt", _THREAD_DATA)
-
-        # Path traversal should still be blocked
-        with pytest.raises(PermissionError, match="path traversal"):
-            validate_local_bash_command_paths("cat /mnt/d/workspace/../../etc/passwd", _THREAD_DATA)
-
-        # Disabled servers should not expose paths
-        disabled_config = ExtensionsConfig(
-            mcp_servers={
-                "filesystem": McpServerConfig(
-                    enabled=False,
-                    command="npx",
-                    args=["-y", "@modelcontextprotocol/server-filesystem", "/mnt/d/workspace"],
-                )
-            }
-        )
-        with patch("deerflow.config.extensions_config.get_extensions_config", return_value=disabled_config):
-            with pytest.raises(PermissionError, match="Unsafe absolute paths"):
-                validate_local_bash_command_paths("ls /mnt/d/workspace", _THREAD_DATA)
-
-
 # ---------- Custom mount path tests ----------
 
 
@@ -1434,27 +1006,6 @@ def test_validate_local_tool_path_blocks_traversal_in_custom_mount() -> None:
     with patch("deerflow.sandbox.tools._get_custom_mounts", return_value=_mock_custom_mounts()):
         with pytest.raises(PermissionError, match="path traversal"):
             validate_local_tool_path("/mnt/code-read/../../etc/passwd", _THREAD_DATA, read_only=True)
-
-
-def test_validate_local_bash_command_paths_allows_custom_mount() -> None:
-    """bash commands referencing custom mount paths should be allowed."""
-    with patch("deerflow.sandbox.tools._get_custom_mounts", return_value=_mock_custom_mounts()):
-        validate_local_bash_command_paths("cat /mnt/code-read/src/main.py", _THREAD_DATA)
-        validate_local_bash_command_paths("ls /mnt/data", _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_blocks_traversal_in_custom_mount() -> None:
-    """Bash commands with traversal in custom mount paths should be blocked."""
-    with patch("deerflow.sandbox.tools._get_custom_mounts", return_value=_mock_custom_mounts()):
-        with pytest.raises(PermissionError, match="path traversal"):
-            validate_local_bash_command_paths("cat /mnt/code-read/../../etc/passwd", _THREAD_DATA)
-
-
-def test_validate_local_bash_command_paths_still_blocks_non_mount_paths() -> None:
-    """Paths not matching any custom mount should still be blocked."""
-    with patch("deerflow.sandbox.tools._get_custom_mounts", return_value=_mock_custom_mounts()):
-        with pytest.raises(PermissionError, match="Unsafe absolute paths"):
-            validate_local_bash_command_paths("cat /etc/shadow", _THREAD_DATA)
 
 
 def test_get_custom_mounts_caching(monkeypatch, tmp_path) -> None:

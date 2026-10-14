@@ -489,8 +489,6 @@ def test_real_vox_cli_search_page_round_trip(rig, tmp_path, stream, message_coun
         [
             sys.executable,
             str(script),
-            "--attempts",
-            "1",
             "search-page",
             "cli",
             *(["--limit", "2"] if message_count == 3 else []),

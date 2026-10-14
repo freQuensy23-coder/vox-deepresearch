@@ -210,7 +210,7 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 ## Where to Go Next
 
 - Backend work → **[backend/AGENTS.md](backend/AGENTS.md)**
-- Research sandbox resource and readiness policy → **[local-deploy/README.md](local-deploy/README.md#shared-sandbox-resources)**; one shared container per research thread, not one per subagent.
+- Native research execution → **[local-deploy/README.md](local-deploy/README.md)**; local processes without another VM or container.
 - Vox relay admission → **[local-deploy/VOX_DYNAMIC_ADMISSION.md](local-deploy/VOX_DYNAMIC_ADMISSION.md)**; local fixtures and a separate opt-in relay, outside the agent loop.
 - Frontend work → **[frontend/AGENTS.md](frontend/AGENTS.md)**
 - Setup & install → **[Install.md](Install.md)**, **[CONTRIBUTING.md](CONTRIBUTING.md)**

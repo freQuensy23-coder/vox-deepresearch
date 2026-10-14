@@ -410,3 +410,8 @@ See `docs/` directory for detailed documentation:
 - [PATH_EXAMPLES.md](docs/PATH_EXAMPLES.md) - Path types and usage
 - [summarization.md](docs/summarization.md) - Context summarization
 - [plan_mode_usage.md](docs/plan_mode_usage.md) - Plan mode with TodoList
+
+Native host Bash does not scan or reject command text based on guessed file paths.
+Research prompts direct writes to the assigned virtual thread folder; structured
+file tools retain their path mapping and ownership checks. Managed command handles
+are not evicted by a fixed session-count limit.

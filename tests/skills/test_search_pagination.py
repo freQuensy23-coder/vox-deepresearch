@@ -13,13 +13,24 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = Path(os.environ.get("VOX_TEST_SCRIPTS", ROOT / "skills/public/telegram-research/scripts"))
+SCRIPTS = Path(
+    os.environ.get("VOX_TEST_SCRIPTS", ROOT / "skills/public/telegram-research/scripts")
+)
 START = "2026-01-01T00:00:00Z"
 END = "2026-01-02T00:00:00Z"
 
 
 def message(i, second=None):
-    return {"id": i, "group_id": -10011111, "date": (datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=i * 2 if second is None else second)).isoformat(), "text": f"SYNTHETIC {i}", "message_url": f"https://t.me/synthetic/{i}"}
+    return {
+        "id": i,
+        "group_id": -10011111,
+        "date": (
+            datetime(2026, 1, 1, tzinfo=timezone.utc)
+            + timedelta(seconds=i * 2 if second is None else second)
+        ).isoformat(),
+        "text": f"SYNTHETIC {i}",
+        "message_url": f"https://t.me/synthetic/{i}",
+    }
 
 
 @pytest.fixture
@@ -35,10 +46,19 @@ def fixture(tmp_path):
             state["calls"].append(query)
             low = datetime.fromisoformat(query["from_date"][0].replace("Z", "+00:00"))
             high = datetime.fromisoformat(query["to_date"][0].replace("Z", "+00:00"))
-            rows = [r for r in state["rows"] if low <= datetime.fromisoformat(r["date"]) <= high]
+            rows = [
+                r
+                for r in state["rows"]
+                if low <= datetime.fromisoformat(r["date"]) <= high
+            ]
             rows.sort(key=lambda r: r["date"], reverse=query["order"][0] == "desc")
-            rows = rows[:min(int(query["limit"][0]), state["cap"])]
-            data = {"messages": rows, "count": len(rows), "stop_reason": "finished", "fixture_schema_evidence": "retained"}
+            rows = rows[: min(int(query["limit"][0]), state["cap"])]
+            data = {
+                "messages": rows,
+                "count": len(rows),
+                "stop_reason": "finished",
+                "fixture_schema_evidence": "retained",
+            }
             if state.get("partial") and len(state["calls"]) == 1:
                 data.update(stop_reason="timeout", stopped_at=rows[-1]["date"])
             if state.get("delay") and len(state["calls"]) == 1:
@@ -58,15 +78,33 @@ def fixture(tmp_path):
     workspace = tmp_path / "collection"
 
     def run(*extra, collector=False, dates=True, limit=50):
-        argv = [sys.executable, str(SCRIPTS / ("collect_search.py" if collector else "vox.py"))]
+        argv = [
+            sys.executable,
+            str(SCRIPTS / ("collect_search.py" if collector else "vox.py")),
+        ]
         argv += ["--query", "synthetic"] if collector else ["search", "synthetic"]
         argv += ["--workspace", str(workspace)]
         if limit is not None:
             argv += ["--limit", str(limit)]
         if dates:
             argv += ["--from", START, "--to", END]
-        result = subprocess.run(argv + list(extra), capture_output=True, text=True, timeout=20, env={**os.environ, "VOX_RELAY_URL": f"http://127.0.0.1:{server.server_port}", "VOX_API_KEY": "synthetic-not-used"}, cwd=tmp_path)
-        saved = json.loads((workspace / "manifest.json").read_text()) if (workspace / "manifest.json").exists() else None
+        result = subprocess.run(
+            argv + list(extra),
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env={
+                **os.environ,
+                "VOX_RELAY_URL": f"http://127.0.0.1:{server.server_port}",
+                "VOX_API_KEY": "synthetic-not-used",
+            },
+            cwd=tmp_path,
+        )
+        saved = (
+            json.loads((workspace / "manifest.json").read_text())
+            if (workspace / "manifest.json").exists()
+            else None
+        )
         return result, saved
 
     yield state, run, workspace
@@ -77,7 +115,9 @@ def fixture(tmp_path):
 
 @pytest.mark.parametrize("order", ["asc", "desc"])
 @pytest.mark.parametrize("collector", [False, True])
-def test_default_requests_2000_and_traverses_requested_page_size(fixture, order, collector):
+def test_default_requests_2000_and_traverses_requested_page_size(
+    fixture, order, collector
+):
     state, run, workspace = fixture
     state["cap"] = 2000
     state["rows"] = [message(i) for i in range(1, 2401)]
@@ -87,7 +127,9 @@ def test_default_requests_2000_and_traverses_requested_page_size(fixture, order,
     assert saved["exhaustive"] is False
     assert len(state["calls"]) == 2
     assert all(c["limit"] == ["2000"] for c in state["calls"])
-    assert {r["id"] for r in json.loads(Path(saved["messages_path"]).read_text())} == set(range(1, 2401))
+    assert {
+        r["id"] for r in json.loads(Path(saved["messages_path"]).read_text())
+    } == set(range(1, 2401))
     assert all(p["argv"][2] == "search-page" for p in saved["pages"])
     for page in saved["pages"]:
         raw = Path(page["source_path"]).read_bytes()
@@ -97,7 +139,9 @@ def test_default_requests_2000_and_traverses_requested_page_size(fixture, order,
 
 
 @pytest.mark.parametrize("order", ["asc", "desc"])
-def test_partial_timeout_continues_both_date_sides_without_losing_boundary(fixture, order):
+def test_partial_timeout_continues_both_date_sides_without_losing_boundary(
+    fixture, order
+):
     state, run, _ = fixture
     state["partial"] = True
     result, saved = run("--order", order)
@@ -118,18 +162,24 @@ def test_page_size_is_not_total_cap_and_schema_max_remains(fixture, limit):
     assert saved["unique_count"] == 2400
     assert len(state["calls"]) == (2 if limit is None else 1)
     assert all(c["limit"] == [str(limit or 2000)] for c in state["calls"])
-    assert {r["id"] for r in json.loads(Path(saved["messages_path"]).read_text())} == set(range(1, 2401))
+    assert {
+        r["id"] for r in json.loads(Path(saved["messages_path"]).read_text())
+    } == set(range(1, 2401))
 
 
 def test_page_budget_resume_checks_cursor_and_preserves_raw(fixture):
     state, run, _ = fixture
     result, saved = run("--max-pages", "1")
     assert result.returncode == 2, result.stderr
-    old = {p["source_path"]: Path(p["source_path"]).read_bytes() for p in saved["pages"]}
+    old = {
+        p["source_path"]: Path(p["source_path"]).read_bytes() for p in saved["pages"]
+    }
     wrong, _ = run("--resume", "--expected-cursor", START)
     assert wrong.returncode == 1
     assert len(state["calls"]) == 1
-    result, saved = run("--resume", "--expected-cursor", saved["remaining_window"]["to"])
+    result, saved = run(
+        "--resume", "--expected-cursor", saved["remaining_window"]["to"]
+    )
     assert result.returncode == 0, result.stderr
     assert saved["unique_count"] == 120
     assert all(Path(p).read_bytes() == b for p, b in old.items())
@@ -167,7 +217,9 @@ def test_omitted_dates_freeze_explicit_window_for_resume(fixture):
     result, saved = run("--max-pages", "1", dates=False)
     assert result.returncode == 2, result.stderr
     initial = dict(saved["parameters"])
-    result, saved = run("--resume", "--expected-cursor", saved["remaining_window"]["to"], dates=False)
+    result, saved = run(
+        "--resume", "--expected-cursor", saved["remaining_window"]["to"], dates=False
+    )
     assert result.returncode == 0, result.stderr
     assert saved["parameters"] == initial
     assert saved["unique_count"] == 120
@@ -187,24 +239,60 @@ def test_stalled_overlap_does_not_close_remaining_window(fixture):
 def test_termination_stops_foreground_child_and_preserves_pending(fixture):
     state, run, workspace = fixture
     state["delay"] = 3
-    argv = [sys.executable, str(SCRIPTS / "vox.py"), "search", "synthetic", "--from", START, "--to", END, "--workspace", str(workspace)]
+    argv = [
+        sys.executable,
+        str(SCRIPTS / "vox.py"),
+        "search",
+        "synthetic",
+        "--from",
+        START,
+        "--to",
+        END,
+        "--workspace",
+        str(workspace),
+    ]
     child = None
-    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ, "VOX_RELAY_URL": state["url"]}) as process:
+    with subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "VOX_RELAY_URL": state["url"]},
+    ) as process:
         try:
             deadline = time.monotonic() + 5
             while not state["calls"] and time.monotonic() < deadline:
                 time.sleep(0.01)
             assert state["calls"]
-            child = int(Path(f"/proc/{process.pid}/task/{process.pid}/children").read_text().strip())
+            rows = subprocess.check_output(
+                ["ps", "-axo", "pid=,ppid="], text=True, timeout=3
+            )
+            children = [
+                int(row.split()[0])
+                for row in rows.splitlines()
+                if int(row.split()[1]) == process.pid
+            ]
+            assert len(children) == 1
+            child = children[0]
             process.terminate()
             process.communicate(timeout=5)
-            assert not Path(f"/proc/{child}").exists()
+            inspection = subprocess.run(
+                ["ps", "-p", str(child), "-o", "stat="],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            assert inspection.returncode != 0 or inspection.stdout.strip().startswith(
+                "Z"
+            )
             saved = json.loads((workspace / "manifest.json").read_text())
             assert saved["pending"] is not None
             assert saved["status"] == "error"
         finally:
-            if child and Path(f"/proc/{child}").exists():
-                os.kill(child, 9)
+            if child:
+                try:
+                    os.kill(child, 9)
+                except ProcessLookupError:
+                    pass
             if process.poll() is None:
                 process.kill()
                 process.wait()
@@ -225,7 +313,9 @@ def test_search_output_is_manifest_snapshot_and_never_overwrites(fixture, tmp_pa
 
 
 @pytest.mark.parametrize("collector", [False, True])
-def test_default_five_pages_pause_and_resume_without_total_message_cap(fixture, collector):
+def test_default_five_pages_pause_and_resume_without_total_message_cap(
+    fixture, collector
+):
     state, run, _ = fixture
     state["cap"] = 2000
     state["rows"] = [message(i) for i in range(1, 12002)]
@@ -237,13 +327,45 @@ def test_default_five_pages_pause_and_resume_without_total_message_cap(fixture, 
     assert len(state["calls"]) == len(saved["pages"]) == 5
     assert all(c["limit"] == ["2000"] for c in state["calls"])
     assert saved["parameters"]["limit"] == 2000
-    assert saved["unique_count"] == 9996  # Four boundary rows overlap between five pages.
-    originals = {p["source_path"]: Path(p["source_path"]).read_bytes() for p in saved["pages"]}
+    assert (
+        saved["unique_count"] == 9996
+    )  # Four boundary rows overlap between five pages.
+    originals = {
+        p["source_path"]: Path(p["source_path"]).read_bytes() for p in saved["pages"]
+    }
     cursor = saved["remaining_window"]["to"]
-    result, resumed = run("--resume", "--expected-cursor", cursor, collector=collector, limit=None)
+    result, resumed = run(
+        "--resume", "--expected-cursor", cursor, collector=collector, limit=None
+    )
     assert result.returncode == 0, result.stderr
     assert resumed["traversal_complete"] is True
     assert resumed["unique_count"] == 12001
     assert len(state["calls"]) == 7
-    assert all(Path(path).read_bytes() == content for path, content in originals.items())
-    assert {r["id"] for r in json.loads(Path(resumed["messages_path"]).read_text())} == set(range(1, 12002))
+    assert all(
+        Path(path).read_bytes() == content for path, content in originals.items()
+    )
+    assert {
+        r["id"] for r in json.loads(Path(resumed["messages_path"]).read_text())
+    } == set(range(1, 12002))
+
+
+def test_collector_has_no_default_deadline_and_accepts_long_explicit_budget():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "collector_deadline", SCRIPTS / "collect_search.py"
+    )
+    collector = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(collector)
+    base = [
+        "--query",
+        "work",
+        "--from",
+        "2026-01-01",
+        "--to",
+        "2026-10-14",
+        "--workspace",
+        "/tmp/collector-args-test",
+    ]
+    assert collector.arguments(base).max_seconds is None
+    assert collector.arguments(base + ["--max-seconds", "3600"]).max_seconds == 3600

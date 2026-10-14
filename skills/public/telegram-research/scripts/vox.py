@@ -2,16 +2,14 @@
 """Read-only Vox API primitives. Research decisions belong to the agent.
 
 Python 3.10+, standard library only. JSON files, saved paths on stdout, diagnostics on stderr.
-One bounded transient HTTP retry; bounded date continuation, no automatic research, link
-crawling or personal reports.
+One HTTP attempt per primitive; bounded date continuation, no automatic research,
+link crawling or personal reports.
 """
 
 import argparse
-import fcntl
 import http.client
 import importlib.util
 import json
-import math
 import os
 import re
 import sys
@@ -20,16 +18,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 from uuid import uuid4
 
 BASE = "https://api.vox-lab.com"
 KEY_FILE = Path.home() / ".config" / "vox" / "api_key"
 TIMEOUT = 300
-ATTEMPTS = 2
 
 
 class VoxError(Exception):
@@ -40,138 +35,6 @@ class IncompleteSearchStream(VoxError):
     """A transport ended before returning the final search result."""
 
 
-class Admission:
-    def __init__(self):
-        configured = os.environ.get("VOX_ADMISSION_DIR")
-        self.directory = (
-            Path(configured).expanduser()
-            if configured is not None
-            else Path.home() / ".cache" / "vox" / "admission"
-        )
-        if not self.directory.is_absolute():
-            raise VoxError("Vox admission requires an absolute VOX_ADMISSION_DIR.")
-        self.stack = ExitStack()
-
-    def __enter__(self):
-        try:
-            self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-            gate = self.stack.enter_context((self.directory / "gate.lock").open("a+b"))
-            fcntl.flock(gate, fcntl.LOCK_EX)
-            try:
-                fd = os.open(self.directory / "status.lock", os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
-                new = True
-            except FileExistsError:
-                fd = os.open(self.directory / "status.lock", os.O_RDWR)
-                new = False
-            self.status_lock = self.stack.enter_context(os.fdopen(fd, "r+b"))
-            with self.lock_status():
-                try:
-                    self.state = self.read_state()
-                except FileNotFoundError:
-                    if not new:
-                        raise
-                    self.state = {"version": 1, "last_start": 0, "cooldown_until": 0, "failures": 0}
-                    self.write_state()
-            while True:
-                with self.lock_status():
-                    self.state = self.read_state()
-                    now = time.time()
-                    delay = max(self.state["last_start"] + 5, self.state["cooldown_until"]) - now
-                    if delay <= 0:
-                        self.state["last_start"] = now
-                        self.write_state()
-                        return self
-                time.sleep(min(delay, 60))
-        except (OSError, ValueError, OverflowError):
-            self.stack.close()
-            raise VoxError("Vox admission unavailable or invalid; no request admitted.") from None
-        except BaseException:
-            self.stack.close()
-            raise
-
-    def __exit__(self, *args):
-        self.stack.close()
-
-    @contextmanager
-    def lock_status(self):
-        fcntl.flock(self.status_lock, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(self.status_lock, fcntl.LOCK_UN)
-
-    def read_state(self):
-        def unique_fields(pairs):
-            result = dict(pairs)
-            if len(result) != len(pairs):
-                raise ValueError("Duplicate admission fields")
-            return result
-
-        with (self.directory / "status.json").open("rb") as handle:
-            raw = handle.read(4097)
-        if len(raw) > 4096:
-            raise ValueError("Oversized admission state")
-        state = json.loads(raw, object_pairs_hook=unique_fields)
-        if not isinstance(state, dict) or set(state) != {"version", "last_start", "cooldown_until", "failures"}:
-            raise ValueError("Invalid admission fields")
-        if type(state["version"]) is not int or state["version"] != 1:
-            raise ValueError("Invalid admission version")
-        if type(state["failures"]) is not int or not 0 <= state["failures"] <= 5:
-            raise ValueError("Invalid admission failure count")
-        for field in ("last_start", "cooldown_until"):
-            value = state[field]
-            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
-                raise ValueError("Invalid admission timestamp")
-        return state
-
-    def write_state(self):
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.directory, prefix=".status-", delete=False) as handle:
-                temporary = Path(handle.name)
-                json.dump(self.state, handle, allow_nan=False, separators=(",", ":"))
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, self.directory / "status.json")
-            temporary = None
-            fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-
-    def finish(self, failed=False, retry_after=None):
-        try:
-            with self.lock_status():
-                self.state = self.read_state()
-                if failed:
-                    self.state["failures"] = min(self.state["failures"] + 1, 5)
-                    now = time.time()
-                    delay = min(60 * 2 ** (self.state["failures"] - 1), 900)
-                    deadline = now + delay
-                    if retry_after is not None:
-                        value = retry_after.strip()
-                        if re.fullmatch(r"[0-9]+", value):
-                            deadline = max(deadline, now + int(value))
-                        else:
-                            try:
-                                parsed = parsedate_to_datetime(value)
-                                deadline = max(deadline, parsed.replace(tzinfo=parsed.tzinfo or timezone.utc).timestamp())
-                            except (ValueError, TypeError, OverflowError):
-                                pass
-                    self.state["cooldown_until"] = max(self.state["cooldown_until"], deadline)
-                else:
-                    self.state["failures"] = 0
-                    self.state["cooldown_until"] = 0
-                self.write_state()
-        except (OSError, ValueError, OverflowError):
-            raise VoxError("Vox admission status could not be persisted; stopping.") from None
-
-
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if fp is not None:
@@ -180,7 +43,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 OPENER = urllib.request.build_opener(NoRedirect())
-RELAY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+RELAY_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), NoRedirect()
+)
 
 
 def read_search_stream(response):
@@ -239,7 +104,9 @@ def relay_base():
         ):
             raise ValueError
     except ValueError:
-        raise VoxError("VOX_RELAY_URL must be an internal HTTP relay base without credentials, path, query or fragment.") from None
+        raise VoxError(
+            "VOX_RELAY_URL must be an internal HTTP relay base without credentials, path, query or fragment."
+        ) from None
     return value.rstrip("/")
 
 
@@ -250,7 +117,11 @@ def call(path, params=None, method="GET"):
         if v is not None and v != "" and v is not False
     }
     relay = relay_base()
-    url = (relay or BASE) + path + ("?" + urllib.parse.urlencode(params) if params else "")
+    url = (
+        (relay or BASE)
+        + path
+        + ("?" + urllib.parse.urlencode(params) if params else "")
+    )
     headers = {"Accept": "application/json", "User-Agent": "curl/8.7.1"}
     if relay is None:
         headers["Authorization"] = f"Bearer {api_key()}"
@@ -260,57 +131,46 @@ def call(path, params=None, method="GET"):
     # The relay owns admission and the upstream deadline. Waiting for a queued
     # request must not consume a second, shorter client-side idle budget.
     # Caller cancellation closes the socket and cancels the relay queue entry.
-    socket_timeout = None if relay else (
-        max(TIMEOUT, int(params.get("timeout", 100)) + 30)
-        if path == "/search/text"
-        else TIMEOUT
+    socket_timeout = (
+        None
+        if relay
+        else (
+            max(TIMEOUT, int(params.get("timeout", 100)) + 30)
+            if path == "/search/text"
+            else TIMEOUT
+        )
     )
-    attempts = ATTEMPTS if relay is None else 1
     opener = OPENER if relay is None else RELAY_OPENER
-    for attempt in range(attempts):
-        with Admission() if relay is None else nullcontext() as admission:
-            retry_after = None
-            try:
-                with opener.open(req, timeout=socket_timeout) as response:
-                    if path == "/search/text" and params.get("stream") == "true":
-                        result = read_search_stream(response)
-                    else:
-                        result = json.loads(response.read().decode("utf-8"))
-            except urllib.error.HTTPError as exc:
-                try:
-                    hints = {
-                        401: "Check the supplied Vox credential.",
-                        403: "The credential may lack this endpoint grant.",
-                        404: "Not found through this lookup; this is not proof of absence in Telegram.",
-                        429: "Rate limited; shared cooldown applies.",
-                    }
-                    message = f"HTTP {exc.code} at {path}. {hints.get(exc.code, 'Request did not succeed.')}"
-                    transient = exc.code in {429, 502, 503, 504, 524}
-                    retry_after = exc.headers.get("Retry-After")
-                finally:
-                    exc.close()
-            except IncompleteSearchStream as exc:
-                message = str(exc)
-                transient = True
-            except (
-                urllib.error.URLError,
-                TimeoutError,
-                OSError,
-                http.client.HTTPException,
-            ) as exc:
-                message = f"Network/timeout error ({type(exc).__name__}) at {path}."
-                transient = True
-            except (ValueError, UnicodeError):
-                raise VoxError(f"Invalid JSON response at {path}.") from None
-            else:
-                if admission is not None:
-                    admission.finish()
-                return result
-            if transient and admission is not None:
-                admission.finish(failed=True, retry_after=retry_after)
-            if not transient or attempt + 1 == attempts:
-                raise VoxError(message) from None
-        print(f"{message} Retrying the same read once after shared admission.", file=sys.stderr)
+    try:
+        with opener.open(req, timeout=socket_timeout) as response:
+            if path == "/search/text" and params.get("stream") == "true":
+                return read_search_stream(response)
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            hints = {
+                401: "Check the supplied Vox credential.",
+                403: "The credential may lack this endpoint grant.",
+                404: "Not found through this lookup; this is not proof of absence in Telegram.",
+                429: "Rate limited; wait before repeating the request.",
+            }
+            message = f"HTTP {exc.code} at {path}. {hints.get(exc.code, 'Request did not succeed.')}"
+        finally:
+            exc.close()
+        raise VoxError(message) from None
+    except IncompleteSearchStream:
+        raise
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+    ) as exc:
+        raise VoxError(
+            f"Network/timeout error ({type(exc).__name__}) at {path}."
+        ) from None
+    except (ValueError, UnicodeError):
+        raise VoxError(f"Invalid JSON response at {path}.") from None
 
 
 def clean(obj):
@@ -543,7 +403,9 @@ def cmd_search_page(args):
 
 
 def cmd_search(args):
-    spec = importlib.util.spec_from_file_location("vox_collect_search", Path(__file__).with_name("collect_search.py"))
+    spec = importlib.util.spec_from_file_location(
+        "vox_collect_search", Path(__file__).with_name("collect_search.py")
+    )
     if spec is None or spec.loader is None:
         raise VoxError("Date collector is unavailable.")
     collector = importlib.util.module_from_spec(spec)
@@ -554,25 +416,50 @@ def cmd_search(args):
         raise VoxError("Expected cursor requires --resume.")
     if args.output is not None and os.path.lexists(Path(args.output).expanduser()):
         raise VoxError("Output already exists; choose a new snapshot path.")
-    workspace = (args.workspace or Path.cwd() / "vox-results" / f"search-{uuid4().hex}").expanduser().resolve()
+    workspace = (
+        (args.workspace or Path.cwd() / "vox-results" / f"search-{uuid4().hex}")
+        .expanduser()
+        .resolve()
+    )
     manifest = workspace / "manifest.json"
-    prior = json.loads(manifest.read_text())["parameters"] if args.resume and manifest.is_file() else {}
-    values = {key: value for key, value in vars(args).items() if key not in {"cmd", "fn", "output"}}
+    prior = (
+        json.loads(manifest.read_text())["parameters"]
+        if args.resume and manifest.is_file()
+        else {}
+    )
+    values = {
+        key: value
+        for key, value in vars(args).items()
+        if key not in {"cmd", "fn", "output"}
+    }
     values.update(
         workspace=workspace,
-        from_date=args.from_date or prior.get("from_date") or "1970-01-01T00:00:00+00:00",
-        to_date=args.to_date or prior.get("to_date") or datetime.now(timezone.utc).isoformat(),
+        from_date=args.from_date
+        or prior.get("from_date")
+        or "1970-01-01T00:00:00+00:00",
+        to_date=args.to_date
+        or prior.get("to_date")
+        or datetime.now(timezone.utc).isoformat(),
     )
-    if collector.timestamp(values["from_date"]) > collector.timestamp(values["to_date"]):
+    if collector.timestamp(values["from_date"]) > collector.timestamp(
+        values["to_date"]
+    ):
         raise VoxError("--from must not be after --to")
     try:
         code = collector.run_collection(argparse.Namespace(**values))
     except collector.CollectionError as exc:
         raise VoxError(str(exc)) from None
-    path = save_result(json.loads(manifest.read_text()), args.output, args.cmd) if args.output else manifest
+    path = (
+        save_result(json.loads(manifest.read_text()), args.output, args.cmd)
+        if args.output
+        else manifest
+    )
     print(path)
     if code:
-        print("Collection is incomplete; inspect status, reason and remaining_window in the manifest.", file=sys.stderr)
+        print(
+            "Collection is incomplete; inspect status, reason and remaining_window in the manifest.",
+            file=sys.stderr,
+        )
         raise SystemExit(code)
 
 
@@ -756,18 +643,12 @@ def save_result(data, output, command):
 
 
 def main(argv=None):
-    global ATTEMPTS
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--attempts",
-        type=int,
-        choices=[1, 2],
-        default=2,
-        help="HTTP attempts per read, including one transient retry by default",
-    )
     sub = parser.add_subparsers(dest="cmd", required=True)
     search = sub.add_parser(
-        "search", aliases=["search-page"], help="bounded automatic date continuation; search-page is the single-page primitive"
+        "search",
+        aliases=["search-page"],
+        help="bounded automatic date continuation; search-page is the single-page primitive",
     )
     search.add_argument("query", type=query_value)
     search.add_argument("--limit", type=integer(1, 10000), default=2000)
@@ -775,7 +656,7 @@ def main(argv=None):
     search.add_argument("--resume", action="store_true")
     search.add_argument("--expected-cursor")
     search.add_argument("--max-pages", type=integer(1, 10000), default=5)
-    search.add_argument("--max-seconds", type=integer(1, 840), default=840)
+    search.add_argument("--max-seconds", type=integer(1, 2**63 - 1))
     search.add_argument("--from", dest="from_date", type=date_value)
     search.add_argument("--to", dest="to_date", type=date_value)
     search.add_argument("--order", choices=["desc", "asc"], default="desc")
@@ -878,7 +759,6 @@ def main(argv=None):
             help="save JSON to a new file (default: unique file in ./vox-results); never overwrite",
         )
     args = parser.parse_args(argv)
-    ATTEMPTS = args.attempts
     if args.cmd in {"search", "search-page"} and args.from_date and args.to_date:
         start, end = [
             datetime.fromisoformat(v.replace("Z", "+00:00"))
