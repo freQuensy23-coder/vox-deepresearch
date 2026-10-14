@@ -382,18 +382,57 @@ def test_resume_rejects_mutated_immutable_source(harness):
     assert len(calls(root)) == 1
 
 
-def test_under_requested_limit_but_documented_cap_is_not_exhaustion(harness):
+@pytest.mark.parametrize("size", [50, 62, 1285, 1999, 2000, 2001])
+def test_saturation_uses_requested_limit_instead_of_old_50_message_cap(harness, size):
     run, workspace, root = harness
-    cli = root / "vox.py"
-    cli.write_text(
-        cli.read_text().replace(
-            'rows[:int(option("--limit"))]', 'rows[:min(50, int(option("--limit")))]'
-        )
+    rows = [message(i) for i in range(size, 0, -1)]
+    result = run({"responses": [response(rows)]}, "--limit", "2000", "--max-pages", "1")
+    saturated = size >= 2000
+    assert result.returncode == (2 if saturated else 0), result.stderr
+    saved = manifest(workspace)
+    assert saved["parameters"]["saturation_threshold"] == 2000
+    assert saved["pages"][0]["classification"] == (
+        "saturated" if saturated else "provider_finished"
     )
-    result = run({"rows": [message(i) for i in range(1, 301)]})
+    assert saved["traversal_complete"] is not saturated
+    assert saved["unique_count"] == size
+    assert len(calls(root)) == 1
+
+
+def test_resume_normalizes_legacy_derived_saturation_threshold(harness):
+    run, workspace, root = harness
+    rows = [message(i) for i in range(2000, 0, -1)]
+    assert (
+        run(
+            {"responses": [response(rows), response([rows[-1]])]},
+            "--limit",
+            "2000",
+            "--max-pages",
+            "1",
+        ).returncode
+        == 2
+    )
+    saved = manifest(workspace)
+    source = Path(saved["pages"][0]["source_path"]).read_bytes()
+    saved["parameters"]["saturation_threshold"] = 50
+    saved["limitations"][-1] = "The OpenAPI description says cap 50 while its schema allows 10000; saturation conservatively uses min(limit, 50)."
+    original_limitations = list(saved["limitations"])
+    encoded_parameters = (
+        json.dumps(saved["parameters"], ensure_ascii=False, sort_keys=True, indent=2)
+        + "\n"
+    ).encode()
+    saved["parameter_hash"] = hashlib.sha256(encoded_parameters).hexdigest()
+    (workspace / "manifest.json").write_text(json.dumps(saved), encoding="utf-8")
+    result = run(None, "--limit", "2000", "--resume")
     assert result.returncode == 0, result.stderr
-    assert manifest(workspace)["unique_count"] == 300
-    assert len(calls(root)) > 6
+    resumed = manifest(workspace)
+    assert resumed["parameters"]["saturation_threshold"] == 2000
+    assert resumed["limitations"][:-1] == original_limitations[:-1]
+    assert resumed["limitations"][-1].startswith("Saturation uses the requested per-page limit;")
+    assert resumed["pages"][-1]["classification"] == "provider_finished"
+    assert resumed["unique_count"] == 2000
+    assert Path(saved["pages"][0]["source_path"]).read_bytes() == source
+    assert len(calls(root)) == 2
 
 
 def test_changed_public_card_between_pages_stops_before_next_call(harness):

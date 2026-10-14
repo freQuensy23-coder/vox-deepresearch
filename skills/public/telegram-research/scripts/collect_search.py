@@ -12,6 +12,10 @@ from pathlib import Path
 from uuid import uuid4
 
 
+SATURATION_LIMITATION = "Saturation uses the requested per-page limit; an undersized provider-finished response ends this indexed-query traversal."
+LEGACY_SATURATION_LIMITATION = "The OpenAPI description says cap 50 while its schema allows 10000; saturation conservatively uses min(limit, 50)."
+
+
 class CollectionError(Exception):
     pass
 
@@ -46,7 +50,7 @@ def arguments(argv):
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--expected-cursor")
-    parser.add_argument("--max-pages", type=bounded_integer(1, 10000), default=20)
+    parser.add_argument("--max-pages", type=bounded_integer(1, 10000), default=5)
     parser.add_argument("--limit", type=bounded_integer(1, 10000), default=2000)
     parser.add_argument("--max-seconds", type=bounded_integer(1, 840), default=840)
     parser.add_argument("--attempts", type=int, choices=[1, 2], default=2)
@@ -124,7 +128,7 @@ def parameters(args):
         digest(Path(p).read_bytes()) for p in values["public_card"]
     ]
     values["overlap_seconds"] = 1
-    values["saturation_threshold"] = min(args.limit, 50)
+    values["saturation_threshold"] = args.limit
     if args.attempts != 2:
         values["attempts"] = args.attempts
     return values
@@ -251,7 +255,7 @@ def new_manifest(params, workspace):
             "traversed means the admitted indexed-query traversal ended on an unsaturated provider-finished response, not all Telegram results.",
             "Date-only inputs mean UTC midnight, not the end of that calendar day; naive datetimes are interpreted as UTC.",
             "One-second overlap protects boundary ties; a saturated timestamp or stalled overlap remains unresolved.",
-            "The OpenAPI description says cap 50 while its schema allows 10000; saturation conservatively uses min(limit, 50).",
+            SATURATION_LIMITATION,
         ],
         "remaining_window": {"from": params["from_date"], "to": params["to_date"]},
         "pending": None,
@@ -481,10 +485,14 @@ def collect(args, workspace, lock):
                 "Workspace exists; use --resume with identical parameters."
             )
         state = json.loads(path.read_text())
+        stored_params = state.get("parameters")
+        normalized_params = dict(stored_params) if isinstance(stored_params, dict) else {}
+        # The threshold is derived from limit; older checkpoints used a smaller cap.
+        normalized_params["saturation_threshold"] = params["saturation_threshold"]
         if (
             state.get("version") != 1
-            or state.get("parameter_hash") != digest(encoded(params))
-            or state.get("parameters") != params
+            or state.get("parameter_hash") != digest(encoded(stored_params))
+            or normalized_params != params
         ):
             raise CollectionError(
                 "Resume parameters or public-card contents do not match the checkpoint parameter hash."
@@ -494,6 +502,11 @@ def collect(args, workspace, lock):
             boundary = "to" if params["order"] == "desc" else "from"
             if not isinstance(window, dict) or args.expected_cursor != window.get(boundary):
                 raise CollectionError("Expected cursor does not match the checkpoint; inspect remaining_window before resuming.")
+        state.update(parameters=params, parameter_hash=digest(encoded(params)))
+        state["limitations"] = [
+            SATURATION_LIMITATION if note == LEGACY_SATURATION_LIMITATION else note
+            for note in state["limitations"]
+        ]
         messages = restore_messages(state)
         if state["traversal_complete"]:
             checkpoint(state, messages, workspace)

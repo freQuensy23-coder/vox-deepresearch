@@ -774,7 +774,7 @@ def main(argv=None):
     search.add_argument("--workspace", type=Path)
     search.add_argument("--resume", action="store_true")
     search.add_argument("--expected-cursor")
-    search.add_argument("--max-pages", type=integer(1, 10000), default=20)
+    search.add_argument("--max-pages", type=integer(1, 10000), default=5)
     search.add_argument("--max-seconds", type=integer(1, 840), default=840)
     search.add_argument("--from", dest="from_date", type=date_value)
     search.add_argument("--to", dest="to_date", type=date_value)

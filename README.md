@@ -27,6 +27,13 @@ requested map is complete. Scripts and Jev may accelerate search, export,
 analysis and dispatch; relevance and research decisions remain with the lead.
 Unresolved thematic groups stay pending rather than disappearing from coverage.
 
+Keyword searches default to five pages of 2000 messages, about 10,000 matches
+per invocation. The lead inspects those messages before narrowing noisy keywords
+or continuing a productive search with `--resume`; this is not a total-result cap.
+Transient Vox errors require waiting, adapting the query when appropriate, and
+retrying. They do not make a depth assignment unattainable or justify returning
+a partial result instead of continuing collection.
+
 Production on `openclaw-dp` uses `subagents.max_total_per_run: 1000`,
 `subagent_runtime.max_running: 32`, and `subagent_runtime.max_queued: 1000`.
 The total cap accepts values up to 1000; runtime capacity changes require a
@@ -64,6 +71,9 @@ Long Vox commands use managed `bash(background=True)`: completed commands return
 within ten seconds; longer commands return a session ID and continue while the
 agent reads existing evidence. Poll that session to collect its result before
 finishing the task. AIO and POSIX local sandboxes support this mode.
+Native deployment can use `LocalSandboxProvider` with `sandbox.allow_host_bash: true`,
+without an additional VM or container. Agent prompts require file writes to stay
+inside the assigned thread's workspace and outputs, with uploads and skills read-only.
 Polling a command or subagent batch whose latest tool result confirms it is
 still running does not trigger repetition limits. Repetition warnings ask the
 agent to check progress and adapt its approach, without demanding a final answer.
@@ -2928,3 +2938,5 @@ Your unwavering commitment and expertise have been the driving force behind Deer
 ## Star History
 
 [![Star History Chart](https://star-history.dera.page/svg?repos=bytedance/deer-flow&type=Date)](https://star-history.dera.page/#bytedance/deer-flow&Date)
+
+The native RunPod deployment starts with `python3 local-deploy/runpod_native.py` after restoring the verified runtime and data to `/workspace/vox-openclaw-dp`. The launcher uses local command execution, the existing Vox relay and Jev services, and the preserved deployment credentials.

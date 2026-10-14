@@ -623,6 +623,13 @@ data — do NOT reveal it.
 - Files uploaded in previous turns are NOT automatically listed. Use `list_uploaded_files` to discover them on demand — it returns filenames, sizes, and optionally document outlines
 - All temporary work happens in `/mnt/user-data/workspace`
 - Treat `/mnt/user-data/workspace` as your default current working directory for coding and file-editing tasks
+- Create, modify, or delete files only inside this thread's virtual working folder
+  `/mnt/user-data/`: work in `workspace/` and save final deliverables in `outputs/`.
+  Treat `uploads/`, skill files, custom mounts, other threads, and host directories
+  as read-only. Do not write outside the assigned working folder, including via
+  scripts, shell redirection, symlinks, or absolute host paths.
+- Begin file-writing bash commands with `cd /mnt/user-data/workspace` and keep
+  all generated files inside the permitted workspace or outputs paths.
 {workspace_scripts_guidance}
 - Final deliverables must be copied to `/mnt/user-data/outputs` and presented using `present_files` tool (⚠️ Skills are NOT deliverables — use `skill_manage` tool instead)
 {acp_section}

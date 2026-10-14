@@ -46,3 +46,8 @@ tools. Batch examples must dispatch all unassigned thematic groups in the
 registry, with 32 running slots, 1000 total assignments and queue capacity 1000.
 Do not replace incomplete group research with a selected sample or prohibit
 further network collection because earlier requests failed.
+
+Keyword collection defaults to five pages of 2000 messages. This is a lead-agent
+quality checkpoint around 10,000 matches, not a total cap or a scripted relevance
+decision. Transient Vox failures require retries with pauses; partial checkpoints
+must not authorize finishing or releasing a depth assignment after a network error.

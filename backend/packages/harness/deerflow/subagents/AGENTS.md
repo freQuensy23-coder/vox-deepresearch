@@ -8,6 +8,9 @@ continuation without paid model work. Always clean up the temporary schema.
 
 Apply each subagent's prompt overlay after assembling its full SystemMessage.
 Registry overrides must not mutate `BUILTIN_SUBAGENTS`.
+The general-purpose system prompt requires following delegated task/skill retry
+instructions for transient tool or network failures before concluding that work
+is unattainable. Saved partial progress is not permission to skip required retries.
 Direct returns use the compiled tool registry, including middleware tools. Match current-turn IDs in call order; error ToolMessages fail the task with outputs preserved.
 Durable batch specs store overlays as JSON and restore them before execution.
 `read_batch_item` projects only report/state/acceptance fields after owner and current-thread checks. Positions are immutable submission order; no status filtering. The bounded tool hashes that projection for continuation, detecting completion/retry/cancel changes. It does not persist snapshots, schedule work or expose execution specs; HTTP bulk export stays independent.

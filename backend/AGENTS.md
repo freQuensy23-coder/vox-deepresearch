@@ -91,6 +91,11 @@ Every code change must keep docs accurate and current: update `README.md` for
 user-facing behavior and the relevant `AGENTS.md` for development changes.
 `CLAUDE.md` imports `AGENTS.md`; do not edit the shim.
 
+Native execution uses `LocalSandboxProvider` with `sandbox.allow_host_bash: true`.
+Lead and depth prompts restrict writes to the assigned virtual thread folder's
+workspace and outputs; file-writing bash commands must first enter the workspace.
+This mode uses local processes and does not require an additional VM or container.
+
 ### Backend Benchmarks
 
 `scripts/benchmark/context_snapshot/`: explicit `run-live` needs provider env

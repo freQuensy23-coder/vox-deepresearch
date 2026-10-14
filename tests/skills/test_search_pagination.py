@@ -57,10 +57,12 @@ def fixture(tmp_path):
     thread.start()
     workspace = tmp_path / "collection"
 
-    def run(*extra, collector=False, dates=True):
+    def run(*extra, collector=False, dates=True, limit=50):
         argv = [sys.executable, str(SCRIPTS / ("collect_search.py" if collector else "vox.py"))]
         argv += ["--query", "synthetic"] if collector else ["search", "synthetic"]
         argv += ["--workspace", str(workspace)]
+        if limit is not None:
+            argv += ["--limit", str(limit)]
         if dates:
             argv += ["--from", START, "--to", END]
         result = subprocess.run(argv + list(extra), capture_output=True, text=True, timeout=20, env={**os.environ, "VOX_RELAY_URL": f"http://127.0.0.1:{server.server_port}", "VOX_API_KEY": "synthetic-not-used"}, cwd=tmp_path)
@@ -75,15 +77,17 @@ def fixture(tmp_path):
 
 @pytest.mark.parametrize("order", ["asc", "desc"])
 @pytest.mark.parametrize("collector", [False, True])
-def test_default_requests_2000_and_automatically_traverses_real_cap(fixture, order, collector):
+def test_default_requests_2000_and_traverses_requested_page_size(fixture, order, collector):
     state, run, workspace = fixture
-    result, saved = run("--order", order, collector=collector)
+    state["cap"] = 2000
+    state["rows"] = [message(i) for i in range(1, 2401)]
+    result, saved = run("--order", order, collector=collector, limit=None)
     assert result.returncode == 0, result.stderr
     assert saved["traversal_complete"] is True
     assert saved["exhaustive"] is False
-    assert len(state["calls"]) == 3
+    assert len(state["calls"]) == 2
     assert all(c["limit"] == ["2000"] for c in state["calls"])
-    assert {r["id"] for r in json.loads(Path(saved["messages_path"]).read_text())} == set(range(1, 121))
+    assert {r["id"] for r in json.loads(Path(saved["messages_path"]).read_text())} == set(range(1, 2401))
     assert all(p["argv"][2] == "search-page" for p in saved["pages"])
     for page in saved["pages"]:
         raw = Path(page["source_path"]).read_bytes()
@@ -107,12 +111,12 @@ def test_partial_timeout_continues_both_date_sides_without_losing_boundary(fixtu
 @pytest.mark.parametrize("limit", [None, 10000])
 def test_page_size_is_not_total_cap_and_schema_max_remains(fixture, limit):
     state, run, _ = fixture
-    state["cap"] = 2000
+    state["cap"] = limit or 2000
     state["rows"] = [message(i) for i in range(1, 2401)]
-    result, saved = run(*([] if limit is None else ["--limit", str(limit)]))
+    result, saved = run(limit=limit)
     assert result.returncode == 0, result.stderr
     assert saved["unique_count"] == 2400
-    assert len(state["calls"]) == 3
+    assert len(state["calls"]) == (2 if limit is None else 1)
     assert all(c["limit"] == [str(limit or 2000)] for c in state["calls"])
     assert {r["id"] for r in json.loads(Path(saved["messages_path"]).read_text())} == set(range(1, 2401))
 
@@ -218,3 +222,28 @@ def test_search_output_is_manifest_snapshot_and_never_overwrites(fixture, tmp_pa
     assert result.returncode == 1
     assert len(state["calls"]) == 3
     assert output.read_bytes() == old
+
+
+@pytest.mark.parametrize("collector", [False, True])
+def test_default_five_pages_pause_and_resume_without_total_message_cap(fixture, collector):
+    state, run, _ = fixture
+    state["cap"] = 2000
+    state["rows"] = [message(i) for i in range(1, 12002)]
+    result, saved = run(collector=collector, limit=None)
+    assert result.returncode == 2, result.stderr
+    assert saved["status"] == "paused"
+    assert saved["reason"].startswith("max_pages reached")
+    assert saved["traversal_complete"] is False
+    assert len(state["calls"]) == len(saved["pages"]) == 5
+    assert all(c["limit"] == ["2000"] for c in state["calls"])
+    assert saved["parameters"]["limit"] == 2000
+    assert saved["unique_count"] == 9996  # Four boundary rows overlap between five pages.
+    originals = {p["source_path"]: Path(p["source_path"]).read_bytes() for p in saved["pages"]}
+    cursor = saved["remaining_window"]["to"]
+    result, resumed = run("--resume", "--expected-cursor", cursor, collector=collector, limit=None)
+    assert result.returncode == 0, result.stderr
+    assert resumed["traversal_complete"] is True
+    assert resumed["unique_count"] == 12001
+    assert len(state["calls"]) == 7
+    assert all(Path(path).read_bytes() == content for path, content in originals.items())
+    assert {r["id"] for r in json.loads(Path(resumed["messages_path"]).read_text())} == set(range(1, 12002))
