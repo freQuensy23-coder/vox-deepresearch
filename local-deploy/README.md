@@ -12,8 +12,11 @@ retain their path mapping and ownership checks.
 
 Background commands return after at most 10 seconds if still running. Their
 handles remain available to the owning execution until its release; there is no
-additional cap of 64 commands. Research supports 32 concurrent depth agents,
-1000 total agents and a queue of 1000, without an overall subagent time limit.
+additional cap of 64 commands.
+
+The gateway reads the deployment's `config.yaml` as is; all limits (subagent
+concurrency, queue, timeouts, bash deadline, summarization) are set there and
+nowhere else.
 
 Vox's adaptive relay is described in [VOX_DYNAMIC_ADMISSION.md](VOX_DYNAMIC_ADMISSION.md).
 

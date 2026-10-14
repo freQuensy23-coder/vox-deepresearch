@@ -55,23 +55,6 @@ env_base = {
     "PYTHONHOME": str(native / "usr/local"),
     "PYTHONPATH": python_paths,
 }
-config_script = """
-import yaml
-from pathlib import Path
-source=Path('/workspace/vox-openclaw-dp/home/private/vox-deepresearch/config.yaml')
-data=yaml.safe_load(source.read_text())
-data.setdefault('subagent_runtime',{}).update(max_running=32,max_queued=1000,admission_policy='queue',queue_timeout_seconds=0)
-data.setdefault('subagents',{}).update(timeout_seconds=0,max_total_per_run=1000)
-data['sandbox']={'use':'deerflow.sandbox.local:LocalSandboxProvider','allow_host_bash':True,'bash_command_timeout':3600}
-Path('/app/config.yaml').write_text(yaml.safe_dump(data,allow_unicode=True,sort_keys=False))
-"""
-subprocess.run(
-    [str(python), "-c", config_script],
-    env={**os.environ, **env_base},
-    check=True,
-    timeout=20,
-)
-os.chown(app / "config.yaml", 1001, 1001)
 pid_file = base / "migration/native-pids.json"
 started = json.loads(pid_file.read_text()) if pid_file.exists() else {}
 for role in ["vox-relay", "gateway", "frontend"]:
@@ -95,7 +78,7 @@ for role in ["vox-relay", "gateway", "frontend"]:
         env["PYTHONPATH"] = python_paths
         env["VOX_RELAY_URL"] = "http://127.0.0.1:8083"
         env["DEER_FLOW_HOME"] = str(source / "runtime")
-        env["DEER_FLOW_CONFIG_PATH"] = str(app / "config.yaml")
+        env["DEER_FLOW_CONFIG_PATH"] = str(source / "config.yaml")
         command = [
             str(python),
             "-m",
