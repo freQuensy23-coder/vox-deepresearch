@@ -59,16 +59,9 @@ def drop_to_gateway_user():
     os.setuid(GATEWAY_UID)
 
 
-jev_gateway_env = dict(env, JEV_GATEWAY_DATABASE=str(home / "jev-gateway.sqlite3"))
-jev_gateway_env["PYTHONPATH"] = f"{base}/home/private/jev-gateway:{env['PYTHONPATH']}"
-for line in (source / ".env").read_text(encoding="utf-8").splitlines():
-    if line and not line.startswith("#") and "=" in line:
-        key, value = line.split("=", 1)
-        jev_gateway_env[key.strip()] = value.strip().strip('"').strip("'")
-
 services = {
     "vox-relay": ([str(python), "local-deploy/vox_adaptive_relay.py"], source, env, None),
-    "jev-gateway": ([str(python), "-m", "jev_gateway"], source, jev_gateway_env, None),
+    "jev-gateway": ([str(python), "-m", "jev_gateway"], source / "jev-gateway", env, None),
     "jev-bridge": ([str(python), "local-deploy/jev_bridge.py"], source, env, None),
     "gateway": (
         [str(python), "-m", "uvicorn", "app.gateway.app:app", "--host", "127.0.0.1", "--port", "18091"],

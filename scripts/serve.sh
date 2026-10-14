@@ -264,6 +264,8 @@ stop_all() {
     _report_reclaimed_ports
     _kill_repo_processes "uvicorn app.gateway.app:app"
     _kill_repo_processes "local-deploy/vox_adaptive_relay.py"
+    _kill_repo_processes "local-deploy/jev_bridge.py"
+    _kill_repo_processes "python -m jev_gateway"
     _kill_repo_processes "next dev"
     _kill_repo_processes "next start"
     _kill_repo_processes "next-server"
@@ -494,11 +496,19 @@ run_service() {
 mkdir -p logs
 mkdir -p temp/client_body_temp temp/proxy_temp temp/fastcgi_temp temp/uwsgi_temp temp/scgi_temp
 
-# 0. Vox relay (settings: vox_relay in config.yaml)
-VOX_RELAY_PORT=$(cd backend && uv run --no-sync python -c "import yaml; print(yaml.safe_load(open('../config.yaml'))['vox_relay']['port'])")
+# 0. Research services (settings: vox_relay, jev_gateway, jev_bridge in config.yaml)
+_config_port() {
+    (cd backend && uv run --no-sync python -c "import yaml; print(yaml.safe_load(open('../config.yaml'))['$1']['port'])")
+}
 run_service "Vox relay" \
     "cd backend && uv run --no-sync python ../local-deploy/vox_adaptive_relay.py > ../logs/vox-relay.log 2>&1" \
-    "$VOX_RELAY_PORT" 30
+    "$(_config_port vox_relay)" 30
+run_service "Jev gateway" \
+    "cd jev-gateway && ../backend/.venv/bin/python -m jev_gateway > ../logs/jev-gateway.log 2>&1" \
+    "$(_config_port jev_gateway)" 30
+run_service "Jev bridge" \
+    "cd backend && uv run --no-sync python ../local-deploy/jev_bridge.py > ../logs/jev-bridge.log 2>&1" \
+    "$(_config_port jev_bridge)" 30
 
 # 1. Gateway API
 run_service "Gateway" \
@@ -528,7 +538,7 @@ echo "  Routing: Frontend → Nginx → Gateway"
 echo "  API:     /api/langgraph/*  →  Gateway agent runtime"
 echo "           /api/*              →  Gateway REST API (8001)"
 echo ""
-echo "  📋 Logs: logs/{vox-relay,gateway,frontend,nginx}.log"
+echo "  📋 Logs: logs/{vox-relay,jev-gateway,jev-bridge,gateway,frontend,nginx}.log"
 echo ""
 
 if $DAEMON_MODE; then

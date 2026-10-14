@@ -182,7 +182,7 @@ def main():
     key = deploy_config.secret("JEV_GATEWAY_API_KEY")
     server = BridgeServer(("127.0.0.1", int(config["port"])), Handler)
     server.key = key
-    server.gateway = urlsplit(config["gateway_url"])
+    server.gateway = urlsplit(f"http://127.0.0.1:{deploy_config.section('jev_gateway')['port']}")
     try:
         server.serve_forever()
     finally:

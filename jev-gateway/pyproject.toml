@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jev-local-gateway"
+version = "1.0.0"
+description = "Local Jev System One API and durable batch processing"
+requires-python = ">=3.11"
+dependencies = ["fastapi==0.133.1", "uvicorn==0.41.0", "httpx==0.28.1", "pydantic==2.13.4", "pyyaml", "python-dotenv"]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1", "pytest-asyncio==1.3.0", "typesafe-sdk==0.7.4"]
+
+[project.scripts]
+jev-gateway = "jev_gateway.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["jev_gateway*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
