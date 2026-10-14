@@ -1907,6 +1907,14 @@ sandbox:
 # Process-wide execution capacity. These fields are restart-required and are
 # shared by ordinary `task` calls and durable batches. Waiting work is async;
 # queued subagents do not occupy a scheduler thread.
+# Production. Deploy only with scripts/deploy.sh (main, pushed). The prod SSH key
+# lives on the jump host; deploy.sh runs `ssh <jump> <target_ssh> ...`.
+deploy:
+  jump: openclaw-dp
+  target_ssh: ssh -F /home/private/.ssh/config.d/vox-prod.conf vox-prod
+  path: /workspace/vox-openclaw-dp/home/private/vox-deepresearch
+  repo: https://github.com/freQuensy23-coder/vox-deepresearch.git
+
 # Vox proxy (local-deploy/vox_relay.py): holds VOX_API_KEY from .env, sends one
 # request to Vox at a time (FIFO), retries failures internally and returns only
 # complete responses. call_timeout bounds each single Vox call; on overrun the

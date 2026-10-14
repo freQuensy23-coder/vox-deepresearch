@@ -1,77 +1,37 @@
 # Vox DeepResearch
 
 Vox DeepResearch is a fork of [DeerFlow](https://github.com/bytedance/deer-flow)
-for agent-led research into public Telegram communities and discussions through
-Vox. It includes the full DeerFlow application and a
-[research guide](skills/public/telegram-research/SKILL.md) describing
-the research pipeline: keyword message search over the requested period,
-semantic group search, Jev filtering with eye review, ranking and full download
-of the top 16 groups, one subagent per group (summary, external links and
-contacts, key participants, new keywords), and further rounds while new keywords
-appear. `scripts/vox.py` is the single Vox CLI and goes through the Vox proxy.
+for agent-driven research of public Telegram discussions through Vox.
 
-The lead can generate a JSON task manifest on disk and submit it through
-`batch_task(items_file=...)`, then continue breadth research while depth agents
-run in parallel. Registry writes use a lock and atomic replacement; group
-claims prevent duplicate assignments. The skill applies to different topics;
-the lead assigns every discovered relevant group and continues until the
-requested map is complete. Scripts and Jev may accelerate search, export,
-analysis and dispatch; relevance and research decisions remain with the lead.
-Unresolved thematic groups stay pending rather than disappearing from coverage.
-The Jev client and bridge pass optional batch policy unchanged and otherwise use
-the gateway defaults. They add no free-only policy or question/criteria limits.
+**Research pipeline** ([SKILL.md](skills/public/telegram-research/SKILL.md)):
+keyword message search over the requested period, semantic group search, Jev
+filtering of messages with eye review and re-runs, ranking of the top 16 groups,
+download of those groups, one subagent per group (summary, external links and
+contacts, active participants, new keywords), and new rounds while new keywords
+appear. The agent chooses keywords, the Jev instruction and when to stop.
 
-Keyword searches default to five pages of 2000 messages, about 10,000 matches
-per invocation. The lead inspects those messages before narrowing noisy keywords
-or continuing a productive search with `--resume`; this is not a total-result cap.
-Transient Vox errors require waiting, adapting the query when appropriate, and
-retrying. They do not make a depth assignment unattainable or justify returning
-a partial result instead of continuing collection.
+**Tools.** `skills/public/telegram-research/scripts/vox.py` is the only Vox
+client; `scripts/jev.py` talks to the Jev bridge. Vox has no endpoint for a
+group's full history, so `vox.py download` collects a group through text
+searches inside it.
 
-Production on `openclaw-dp` uses `subagents.max_total_per_run: 1000`,
-`subagent_runtime.max_running: 32`, and `subagent_runtime.max_queued: 1000`.
-The total cap accepts values up to 1000; runtime capacity changes require a
-Gateway restart. On this deployment, execution and queue wait deadlines are
-disabled (`timeout_seconds: 0`, `queue_timeout_seconds: 0`); cancellation remains available.
+**Services**, all configured in `config.yaml` with secrets in the root `.env`:
 
-Parallel agents can read shared skill files without occupying worker threads
-while waiting for the file gate; read-before-write protection remains active.
+- [Vox proxy](local-deploy/VOX_PROXY.md) (`local-deploy/vox_relay.py`): one
+  request to Vox at a time (FIFO), internal retries, only complete responses;
+  a single Vox call over 50 seconds returns an error advising a smaller date
+  interval.
+- Jev gateway (`jev-gateway/`) and Jev bridge (`local-deploy/jev_bridge.py`).
+- DeerFlow Gateway and frontend. `make dev` starts everything locally.
 
-The lead and depth agents execute as local processes without another VM or
-container. Prompts instruct them to write inside their assigned workspace;
-[the native deployment guide](local-deploy/README.md) describes the runtime.
+**Production** is deployed only with `scripts/deploy.sh` from the pushed
+`main`; see [local-deploy/README.md](local-deploy/README.md).
 
-Follow [Quick Start](#quick-start) to configure a model and start the application.
-Supply `VOX_API_KEY` through the run's `config.context.secrets` so the skill can
-access it inside the sandbox; a Gateway `.env` value alone is not forwarded.
 Example request:
 
 ```text
 /telegram-research Найди чаты, где студенты обсуждают подработку
 ```
-
-The [Vox proxy](local-deploy/VOX_PROXY.md) executes one upstream
-request at a time behind a FIFO queue. It handles upstream failures, retries,
-`Retry-After`, and incomplete-stream fallbacks internally, returning only a
-complete successful response. Each individual HTTP call to Vox has 50 seconds;
-expiry returns the proxy's own error advising a smaller date interval. Queue
-waiting and retry waits are outside that clock. Fast failures retry without
-an overall retry deadline or attempt-count cap.
-
-Long Vox commands use managed `bash(background=True)`: completed commands return
-within ten seconds; longer commands return a session ID and continue while the
-agent reads existing evidence. Poll that session to collect its result before
-finishing the task. AIO and POSIX local sandboxes support this mode.
-Native deployment can use `LocalSandboxProvider` with `sandbox.allow_host_bash: true`,
-without an additional VM or container. Agent prompts require file writes to stay
-inside the assigned thread's workspace and outputs, with uploads and skills read-only.
-Polling a command or subagent batch whose latest tool result confirms it is
-still running does not trigger repetition limits. Repetition warnings ask the
-agent to check progress and adapt its approach, without demanding a final answer.
-Research that requires a completed report continues while its batches run,
-collects their results and synthesizes them. `batch_status` can wait up to
-60 seconds for progress. Large batch manifests retain their complete contents
-through the sandbox transport.
 
 The application documentation below is inherited from DeerFlow. Upstream
 attribution and the [MIT license](LICENSE) are preserved.
@@ -1283,12 +1243,8 @@ A standard Agent Skill is a structured capability module — a Markdown file tha
 
 Skills are loaded progressively — only when the task needs them, not all at once. This keeps the context window lean and makes DeerFlow work well even with token-sensitive models.
 
-The built-in [Telegram research skill](skills/public/telegram-research/SKILL.md) runs
-the research pipeline: keyword message search over the requested period,
-semantic group search, Jev filtering with eye review, ranking and full download
-of the top 16 groups, one subagent per group (summary, external links and
-contacts, key participants, new keywords), and further rounds while new keywords
-appear. `scripts/vox.py` is the single Vox CLI and goes through the Vox proxy. Activate it with, for example,
+The built-in [Telegram research skill](skills/public/telegram-research/SKILL.md)
+is described at the top of this README. Activate it with, for example,
 `/telegram-research Найди чаты, где студенты обсуждают подработку`.
 
 When deferred skill discovery is enabled, `describe_skill` ranks installed skills by bounded, Unicode-normalized intent-term coverage across names and descriptions. Natural multi-term requests can therefore find a relevant skill without requiring one exact phrase, while exact `select:` and required-name `+prefix` lookups remain available. Ranked searches use up to 256 characters and return up to five results; exact `select:` lists are not truncated and return all requested catalog matches.
@@ -2917,6 +2873,3 @@ Your unwavering commitment and expertise have been the driving force behind Deer
 
 [![Star History Chart](https://star-history.dera.page/svg?repos=bytedance/deer-flow&type=Date)](https://star-history.dera.page/#bytedance/deer-flow&Date)
 
-The native RunPod deployment starts with `python3 local-deploy/runpod_native.py`; see [local-deploy/README.md](local-deploy/README.md).
-The shared research registry records agent decisions without judging fact-sheet
-word counts, source-URL formatting or search-result JSON status.

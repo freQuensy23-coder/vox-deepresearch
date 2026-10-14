@@ -1,8 +1,12 @@
 # Native Vox deployment
 
-`runpod_native.py` starts the proxy, Gateway, frontend, Vox relay, Jev bridge and
-Jev gateway directly on the RunPod host. Research uses `LocalSandboxProvider`
-with host Bash enabled; it does not create another container or VM.
+Deploy only with `scripts/deploy.sh` from the pushed `main`; never change the
+prod host by hand. The script builds the frontend (Next standalone), uploads it
+through the jump host from `deploy` in `config.yaml`, checks out the same commit
+on the host, runs `uv sync`, restarts every service with `runpod_native.py`
+(proxy, Gateway, frontend, Vox relay, Jev bridge and Jev gateway) and checks
+their health. Research uses `LocalSandboxProvider` with host Bash enabled; it
+does not create another container or VM.
 
 ## Configuration
 

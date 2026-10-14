@@ -1,56 +1,27 @@
-"""Start the research services natively on the RunPod host.
+"""(Re)start every research service on the RunPod host. Run by scripts/deploy.sh.
 
-All service settings come from the repository's config.yaml and all secrets
-from its .env. The Codex login lives in the service user's ~/.codex/auth.json.
+Python comes from backend/.venv (uv sync), the frontend from frontend/build
+(Next standalone, built by deploy.sh). Settings come from config.yaml, secrets
+from .env; the Codex login is the service user's ~/.codex/auth.json.
 """
 
 import json
 import os
+import signal
 import subprocess
+import time
 from pathlib import Path
 
-os.umask(0o077)
+source = Path(__file__).resolve().parents[1]
 base = Path("/workspace/vox-openclaw-dp")
-source = base / "home/private/vox-deepresearch"
-native = Path("/opt/vox/native-runtime")
-app = native / "app"  # prebuilt venv and frontend; the venv expects to live at /app
 home = base / "native-home"
 logs = base / "migration/native-logs"
 pid_file = base / "migration/native-pids.json"
+node = "/opt/vox/native-runtime/usr/bin/node"
 GATEWAY_UID = 1001
 
-
-def link(destination, target):
-    if not destination.exists():
-        destination.symlink_to(target)
-    elif destination.resolve() != target.resolve():
-        raise RuntimeError(f"Unexpected existing {destination}")
-
-
-logs.mkdir(exist_ok=True)
-home.mkdir(exist_ok=True)
-os.chown(home, GATEWAY_UID, GATEWAY_UID)
-link(Path("/app"), app)
-if not Path("/usr/local/bin/python3.12").exists():
-    Path("/usr/local/bin/python3.12").symlink_to(native / "usr/local/bin/python3.12")
-link(source / "backend/.deer-flow", source / "runtime")
-
-python = app / "backend/.venv/bin/python"
-env = {
-    "PATH": f"{native}/usr/bin:{app}/backend/.venv/bin:/usr/local/bin:/usr/bin:/bin",
-    "LD_LIBRARY_PATH": str(native / "usr/local/lib"),
-    "PYTHONHOME": str(native / "usr/local"),
-    "PYTHONPATH": ":".join(
-        str(p)
-        for p in [
-            source / "backend",
-            source / "backend/packages/harness",
-            source / "backend/packages/extension-api",
-            app / "backend/.venv/lib/python3.12/site-packages",
-        ]
-    ),
-    "HOME": str(home),
-}
+python = str(source / "backend/.venv/bin/python")
+env = {"PATH": f"{source}/backend/.venv/bin:/usr/local/bin:/usr/bin:/bin", "HOME": str(home)}
 
 
 def drop_to_gateway_user():
@@ -60,29 +31,55 @@ def drop_to_gateway_user():
 
 
 services = {
-    "vox-relay": ([str(python), "local-deploy/vox_relay.py"], source, env, None),
-    "jev-gateway": ([str(python), "-m", "jev_gateway"], source / "jev-gateway", env, None),
-    "jev-bridge": ([str(python), "local-deploy/jev_bridge.py"], source, env, None),
+    "vox-relay": ([python, "local-deploy/vox_relay.py"], source, env, None),
+    "jev-gateway": ([python, "-m", "jev_gateway"], source / "jev-gateway", env, None),
+    "jev-bridge": ([python, "local-deploy/jev_bridge.py"], source, env, None),
     "gateway": (
-        [str(python), "-m", "uvicorn", "app.gateway.app:app", "--host", "127.0.0.1", "--port", "18091"],
+        [python, "-m", "uvicorn", "app.gateway.app:app", "--host", "127.0.0.1", "--port", "18091"],
         source / "backend",
         env,
         drop_to_gateway_user,
     ),
+    "frontend": ([node, "server.js"], source / "frontend/build", dict(env, NODE_ENV="production", HOSTNAME="127.0.0.1", PORT="3000"), None),
     "proxy": (["nginx", "-c", str(source / "local-deploy/runpod-nginx.conf")], source, env, None),
-    "frontend": (
-        [str(native / "usr/bin/node"), str(app / "frontend/node_modules/next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", "3000"],
-        app / "frontend",
-        dict(env, NODE_ENV="production", DEER_FLOW_INTERNAL_GATEWAY_BASE_URL="http://127.0.0.1:18091"),
-        None,
-    ),
 }
 
-started = json.loads(pid_file.read_text()) if pid_file.exists() else {}
+
+def stop(pid):
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    for _ in range(100):
+        if not Path(f"/proc/{pid}").exists():
+            return
+        time.sleep(0.1)
+    os.killpg(pid, signal.SIGKILL)
+
+
+logs.mkdir(parents=True, exist_ok=True)
+home.mkdir(exist_ok=True)
+os.chown(home, GATEWAY_UID, GATEWAY_UID)
+deer_flow = source / "backend/.deer-flow"
+if not deer_flow.exists():
+    deer_flow.symlink_to(source / "runtime")
+
+for pid in (json.loads(pid_file.read_text()) if pid_file.exists() else {}).values():
+    stop(pid)
+# nginx records its master in the pid file named by runpod-nginx.conf.
+nginx_pid = Path("/run/vox-migration-nginx.pid")
+if nginx_pid.exists():
+    try:
+        os.kill(int(nginx_pid.read_text()), signal.SIGQUIT)
+    except (ProcessLookupError, ValueError):
+        pass
+    for _ in range(100):
+        if not nginx_pid.exists():
+            break
+        time.sleep(0.1)
+
+started = {}
 for role, (command, cwd, role_env, preexec) in services.items():
-    previous = started.get(role)
-    if previous and Path(f"/proc/{previous}/cmdline").exists():
-        continue
     with (logs / f"{role}.log").open("ab") as output:
         child = subprocess.Popen(
             command,
