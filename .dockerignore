@@ -3,11 +3,6 @@ Dockerfile
 .dockerignore
 .git
 .gitignore
-.deployment/
-runtime/
-config.yaml
-compose.local.yaml
-DEPLOYMENT.local.md
 docker/
 
 # Python
@@ -89,3 +84,4 @@ backend/sandbox/
 !backend/extensions/
 !backend/extensions/sources/
 !backend/extensions/sources/**
+.deployment/

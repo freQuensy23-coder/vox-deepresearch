@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -31,6 +32,13 @@ _ACP_WORKSPACE_VIRTUAL_PREFIX = "/mnt/acp-workspace"
 # cost of losing its accumulated ``_agent_written_paths`` (read_file falls
 # back to no reverse resolution, which is the same behaviour as a fresh run).
 DEFAULT_MAX_CACHED_THREAD_SANDBOXES = 256
+
+
+def _configured_environment() -> dict[str, str]:
+    """`sandbox.environment` from config.yaml; `$NAME` values come from the host env."""
+    from deerflow.config import get_app_config
+
+    return {key: os.environ.get(value[1:], "") if value.startswith("$") else value for key, value in get_app_config().sandbox.environment.items()}
 
 
 class LocalSandboxProvider(SandboxProvider):
@@ -455,7 +463,7 @@ class LocalSandboxProvider(SandboxProvider):
                 if self._generic_sandbox is None:
                     mappings = list(self._path_mappings)
                     self._append_public_skill_mapping(mappings, skill_projection)
-                    self._generic_sandbox = LocalSandbox("local", path_mappings=mappings)
+                    self._generic_sandbox = LocalSandbox("local", path_mappings=mappings, environment=_configured_environment())
                     _singleton = self._generic_sandbox
                 return self._generic_sandbox.id
 
@@ -506,6 +514,7 @@ class LocalSandboxProvider(SandboxProvider):
                 replacement = LocalSandbox(
                     self._sandbox_id_for_thread(thread_id, effective_user_id),
                     path_mappings=new_mappings,
+                    environment=_configured_environment(),
                 )
                 if cached is not None:
                     replacement._agent_written_paths.update(cached._agent_written_paths)

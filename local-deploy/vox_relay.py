@@ -1,7 +1,6 @@
 import fcntl
 import hashlib
 import http.client
-import ipaddress
 import json
 import math
 import os
@@ -772,20 +771,3 @@ class RelayHandler(BaseHTTPRequestHandler):
                 response.close()
             self.server.gate.release(fd)
             self.close_connection = True
-
-
-def main():
-    host = os.environ.get("VOX_RELAY_HOST", "127.0.0.1")
-    if not ipaddress.ip_address(host).is_private and host != "0.0.0.0":
-        raise ValueError("relay requires a private bind address")
-    server = RelayServer((host, int(os.environ.get("VOX_RELAY_PORT", "8083"))),
-                         key_file=os.environ.get("VOX_RELAY_KEY_FILE", "/run/secrets/vox-api-key"),
-                         state_dir=os.environ.get("VOX_RELAY_STATE_DIR", "/var/lib/vox-relay-state"))
-    try:
-        server.serve_forever()
-    finally:
-        server.server_close()
-
-
-if __name__ == "__main__":
-    main()

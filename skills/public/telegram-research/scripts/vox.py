@@ -22,9 +22,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-BASE = "https://api.vox-lab.com"
-KEY_FILE = Path.home() / ".config" / "vox" / "api_key"
-TIMEOUT = 300
 
 
 class VoxError(Exception):
@@ -39,10 +36,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if fp is not None:
             fp.close()
-        raise VoxError("Vox redirected the request; refusing to forward the API key.")
+        raise VoxError("Vox relay redirected the request; refusing to follow it.")
 
 
-OPENER = urllib.request.build_opener(NoRedirect())
 RELAY_OPENER = urllib.request.build_opener(
     urllib.request.ProxyHandler({}), NoRedirect()
 )
@@ -70,31 +66,16 @@ def read_search_stream(response):
     )
 
 
-def api_key():
-    key = os.getenv("VOX_API_KEY", "").strip()
-    if not key and KEY_FILE.is_file():
-        key = KEY_FILE.read_text(encoding="utf-8").strip()
-    if not key:
-        raise VoxError(
-            "VOX_API_KEY is missing. Supply the skill secret or a local ~/.config/vox/api_key."
-        )
-    if not key.isascii() or any(ord(char) <= 32 or ord(char) == 127 for char in key):
-        raise VoxError(
-            "VOX_API_KEY must be a single ASCII token without embedded whitespace."
-        )
-    return key
-
-
 def relay_base():
     value = os.environ.get("VOX_RELAY_URL")
     if value is None:
-        return None
+        raise VoxError("VOX_RELAY_URL is not set; it comes from sandbox.environment in config.yaml.")
     try:
         url = urllib.parse.urlsplit(value)
         if (
             any(ord(char) <= 32 or ord(char) == 127 for char in value)
             or url.scheme != "http"
-            or url.hostname not in {"vox-relay", "localhost", "127.0.0.1", "::1"}
+            or url.hostname not in {"localhost", "127.0.0.1", "::1"}
             or url.username is not None
             or url.password is not None
             or url.path not in {"", "/"}
@@ -118,31 +99,19 @@ def call(path, params=None, method="GET"):
     }
     relay = relay_base()
     url = (
-        (relay or BASE)
+        relay
         + path
         + ("?" + urllib.parse.urlencode(params) if params else "")
     )
     headers = {"Accept": "application/json", "User-Agent": "curl/8.7.1"}
-    if relay is None:
-        headers["Authorization"] = f"Bearer {api_key()}"
-    elif os.environ.get("VOX_TOOL_TRACE_CONTEXT"):
+    if os.environ.get("VOX_TOOL_TRACE_CONTEXT"):
         headers["X-Vox-Tool-Trace"] = os.environ["VOX_TOOL_TRACE_CONTEXT"]
     req = urllib.request.Request(url, method=method, headers=headers)
     # The relay owns admission and the upstream deadline. Waiting for a queued
     # request must not consume a second, shorter client-side idle budget.
     # Caller cancellation closes the socket and cancels the relay queue entry.
-    socket_timeout = (
-        None
-        if relay
-        else (
-            max(TIMEOUT, int(params.get("timeout", 100)) + 30)
-            if path == "/search/text"
-            else TIMEOUT
-        )
-    )
-    opener = OPENER if relay is None else RELAY_OPENER
     try:
-        with opener.open(req, timeout=socket_timeout) as response:
+        with RELAY_OPENER.open(req, timeout=None) as response:
             if path == "/search/text" and params.get("stream") == "true":
                 return read_search_stream(response)
             return json.loads(response.read().decode("utf-8"))

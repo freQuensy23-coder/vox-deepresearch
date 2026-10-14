@@ -6,6 +6,7 @@ import math
 import os
 import re
 import sys
+import urllib.parse
 from collections import Counter
 from pathlib import Path
 
@@ -147,7 +148,10 @@ def validate_response(raw, questions):
 
 
 def request(method, path, body=None):
-    connection = http.client.HTTPConnection("jev-bridge", 8084, timeout=140)
+    url = urllib.parse.urlsplit(os.environ.get("JEV_URL", ""))
+    if url.scheme != "http" or url.hostname not in {"localhost", "127.0.0.1", "::1"} or url.path not in {"", "/"}:
+        raise ClientError("JEV_URL must be the local Jev bridge; it comes from sandbox.environment in config.yaml")
+    connection = http.client.HTTPConnection(url.hostname, url.port or 80, timeout=140)
     try:
         connection.request(
             method,

@@ -263,6 +263,7 @@ stop_all() {
     echo "Stopping all services..."
     _report_reclaimed_ports
     _kill_repo_processes "uvicorn app.gateway.app:app"
+    _kill_repo_processes "local-deploy/vox_adaptive_relay.py"
     _kill_repo_processes "next dev"
     _kill_repo_processes "next start"
     _kill_repo_processes "next-server"
@@ -493,6 +494,12 @@ run_service() {
 mkdir -p logs
 mkdir -p temp/client_body_temp temp/proxy_temp temp/fastcgi_temp temp/uwsgi_temp temp/scgi_temp
 
+# 0. Vox relay (settings: vox_relay in config.yaml)
+VOX_RELAY_PORT=$(cd backend && uv run --no-sync python -c "import yaml; print(yaml.safe_load(open('../config.yaml'))['vox_relay']['port'])")
+run_service "Vox relay" \
+    "cd backend && uv run --no-sync python ../local-deploy/vox_adaptive_relay.py > ../logs/vox-relay.log 2>&1" \
+    "$VOX_RELAY_PORT" 30
+
 # 1. Gateway API
 run_service "Gateway" \
     "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 $GATEWAY_EXTRA_FLAGS > ../logs/gateway.log 2>&1" \
@@ -521,7 +528,7 @@ echo "  Routing: Frontend → Nginx → Gateway"
 echo "  API:     /api/langgraph/*  →  Gateway agent runtime"
 echo "           /api/*              →  Gateway REST API (8001)"
 echo ""
-echo "  📋 Logs: logs/{gateway,frontend,nginx}.log"
+echo "  📋 Logs: logs/{vox-relay,gateway,frontend,nginx}.log"
 echo ""
 
 if $DAEMON_MODE; then

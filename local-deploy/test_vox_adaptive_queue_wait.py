@@ -91,19 +91,8 @@ def test_invalid_wait_not_silently_unbounded(tmp_path, wait):
         gate.acquire(wait)
 
 
-@pytest.mark.parametrize(
-    "relay_mode,upstream_timeout,expected",
-    [(True, 600, None), (False, 600, 630), (False, 10, 300)],
-)
-def test_cli_only_relay_mode_removes_idle_cutoff(
-    tmp_path, monkeypatch, relay_mode, upstream_timeout, expected
-):
-    monkeypatch.setenv("VOX_API_KEY", "dummy-local-key")
-    monkeypatch.setenv("VOX_ADMISSION_DIR", str(tmp_path / "admission"))
-    if relay_mode:
-        monkeypatch.setenv("VOX_RELAY_URL", "http://127.0.0.1:12345")
-    else:
-        monkeypatch.delenv("VOX_RELAY_URL", raising=False)
+def test_cli_relay_mode_has_no_idle_cutoff(monkeypatch):
+    monkeypatch.setenv("VOX_RELAY_URL", "http://127.0.0.1:12345")
     seen = []
 
     class FakeOpener:
@@ -112,15 +101,20 @@ def test_cli_only_relay_mode_removes_idle_cutoff(
             return io.BytesIO(FINAL)
 
     monkeypatch.setattr(vox, "RELAY_OPENER", FakeOpener())
-    monkeypatch.setattr(vox, "OPENER", FakeOpener())
     assert (
         vox.call(
             "/search/text",
-            {"query": "local", "timeout": upstream_timeout, "stream": True},
+            {"query": "local", "timeout": 600, "stream": True},
         )["stop_reason"]
         == "finished"
     )
-    assert seen == [expected]
+    assert seen == [None]
+
+
+def test_cli_requires_relay(monkeypatch):
+    monkeypatch.delenv("VOX_RELAY_URL", raising=False)
+    with pytest.raises(vox.VoxError, match="VOX_RELAY_URL"):
+        vox.call("/groups/1")
 
 
 @pytest.fixture

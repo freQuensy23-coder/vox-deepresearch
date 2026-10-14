@@ -1,9 +1,7 @@
 """Opt-in adaptive Vox relay. Never changes or migrates the baseline relay state."""
 
 import http.client
-import ipaddress
 import math
-import os
 import select
 import socket
 import threading
@@ -13,6 +11,7 @@ from datetime import datetime
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import deploy_config
 from adaptive_gate import AdaptiveGate, Busy, Cancelled
 from vox_relay import HTTPSUpstream, RelayHandler, RelayServer
 from vox_json_probe import CompletionProbe
@@ -283,17 +282,11 @@ class AdaptiveRelayHandler(RelayHandler):
 
 
 def main():
-    if os.environ.get("VOX_RELAY_ADAPTIVE") != "1":
-        raise ValueError("adaptive relay requires explicit VOX_RELAY_ADAPTIVE=1")
-    host = os.environ.get("VOX_RELAY_HOST", "127.0.0.1")
-    if not ipaddress.ip_address(host).is_private and host != "0.0.0.0":
-        raise ValueError("relay requires a private bind address")
+    config = deploy_config.section("vox_relay")
     server = AdaptiveRelayServer(
-        (host, int(os.environ.get("VOX_RELAY_PORT", "8083"))),
-        key_file=os.environ.get("VOX_RELAY_KEY_FILE", "/run/secrets/vox-api-key"),
-        state_dir=os.environ.get(
-            "VOX_RELAY_ADAPTIVE_STATE_DIR", "/var/lib/vox-relay-adaptive-state"
-        ),
+        ("127.0.0.1", int(config["port"])),
+        key_file=str(deploy_config.path(config["key_file"])),
+        state_dir=str(deploy_config.path(config["state_dir"])),
     )
     try:
         server.serve_forever()

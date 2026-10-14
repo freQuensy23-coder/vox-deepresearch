@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 57
+config_version: 55
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -1880,40 +1880,13 @@ sandbox:
 # shared by ordinary `task` calls and durable batches. Waiting work is async;
 # queued subagents do not occupy a scheduler thread.
 subagent_runtime:
-  max_running: 32
-  max_queued: 1000
+  max_running: 3
+  max_queued: 64
   admission_policy: queue       # queue or reject when all slots are occupied
-  queue_timeout_seconds: 0       # no queue deadline; cancellation still works
-
-# Vox research profile; agents retain control of relevance and research decisions.
-lead_prompt_overlay:
-  append: >-
-    For telegram-research, follow the active skill. The lead searches broadly and
-    assigns EVERY discovered relevant group to depth research, one group per agent
-    except documented linked clusters. Use scripts, automation and Jev as useful;
-    batch_task(items_file=...) can submit all unassigned relevant groups with
-    max_running_items=32 and max_live_items=1000. Do not limit coverage to a sample
-    or stop at a report while relevant groups or discoveries remain unresolved.
-    The goal is the complete map requested by the user. Individual network errors
-    do not authorize a blanket ban on further requests for depth agents.
-subagents:
-  timeout_seconds: 0
-  max_total_per_run: 1000
-  agents:
-    general-purpose:
-      prompt_overlay:
-        append: >-
-          For telegram-research, investigate your assigned group using the active
-          skill and original user question. You may export the group and use
-          scripts, automation and Jev to obtain and analyze the needed evidence.
-          Save sourced facts, new keywords, external links and public business
-          contacts, and add every discovered relevant group to the shared registry.
-          Existing samples do not restrict further collection. Keep unfinished
-          research partial rather than claiming it is complete.
+  queue_timeout_seconds: 300
 
 # subagents:
 #   # Default timeout (seconds) for built-in subagents (default: 1800 = 30 min).
-#   # Set 0 for no execution deadline (ordinary tasks and durable batches).
 #   # Custom agents use their own timeout_seconds (default 900) unless overridden.
 #   timeout_seconds: 1800
 #   # Optional global max-turn override for all subagents. One turn is one
@@ -1925,9 +1898,9 @@ subagents:
 #   # Total number of subagent delegations allowed in one lead-agent run.
 #   # This is a deterministic backstop against repeated planning checkpoints
 #   # launching legal-sized batches forever. The default 6 allows two full
-#   # batches at the default concurrency of 3. Valid config range: 1-1000.
+#   # batches at the default concurrency of 3. Valid config range: 1-50.
 #   # Per-request runtime context can temporarily override this with
-#   # `max_total_subagents`, clamped to the same 1-1000 range.
+#   # `max_total_subagents`, clamped to the same 1-50 range.
 #   max_total_per_run: 6
 #
 #   # Per-run token ceiling for subagents (#3875 Phase 2). A backstop against a
@@ -1985,23 +1958,21 @@ subagents:
 #   # Set `model` to use a different model (e.g., a local Ollama model for cost savings).
 #   # The model name must match a name defined in the `models:` section above.
 
-# Durable native-subagent batches for the Vox research workflow.
-# Requires database.backend sqlite/postgres (SQLite is configured below).
+# Durable native-subagent batches. Disabled by default because enabling it can
+# materially increase model usage and requires database.backend sqlite/postgres.
 # The three limits are intentionally separate:
 # - total: all persisted items in one batch
 # - live: pending work admitted as queued/running at one time
 # - running: items from one batch allowed to hold real execution slots
 subagent_batches:
-  enabled: true
+  enabled: false
   poll_interval_seconds: 1
   lease_seconds: 120
-  max_items_per_batch: 1000
-  # Cumulative submitted items across all batches in one lead run (terminal items count).
-  max_items_per_run: 1000
-  default_max_live_items: 1000
+  max_items_per_batch: 5000
+  default_max_live_items: 100
   max_live_items_per_batch: 1000
-  default_max_running_items: 32
-  max_running_items_per_batch: 32
+  default_max_running_items: 3
+  max_running_items_per_batch: 64
   max_attempts: 3
   max_result_chars: 100000
   result_preview_max_chars: 2000

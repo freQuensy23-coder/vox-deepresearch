@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 55
+config_version: 57
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -116,12 +116,12 @@ token_budget:
 # A run's recursion_limit caps the number of LangGraph super-steps (each is at
 # least one LLM call). Clients may override the default per request; invalid or
 # non-positive client values fall back to this configured default.
-recursion_limit: 100
+recursion_limit: 1000
 
 # The Gateway never trusts a configured or client-supplied value above this
 # ceiling, preventing runaway API cost / DoS. Raise it only if you legitimately
 # run very deeply nested subagent graphs.
-max_recursion_limit: 1000
+max_recursion_limit: 2000
 
 
 # ============================================================================
@@ -154,21 +154,28 @@ max_recursion_limit: 1000
 #                                      # (optional; omit → hits billed at miss price)
 
 models:
-  # ChatGPT subscription via Codex CLI login (~/.codex/auth.json)
+  - name: gpt-6.1-sol
+    display_name: GPT-6.1 SOL (Codex)
+    use: deerflow.models.openai_codex_provider:CodexChatModel
+    model: gpt-6.1-sol
+    reasoning_effort: medium
+    service_tier: priority
+    supports_thinking: true
+    supports_tool_calling: true
+    none_effort_fallback: low
+    reasoning:
+      thinking: required
+      effort:
+        values: [low, medium, high, xhigh, max]
+        default: medium
+        aliases:
+          minimal: low
   - name: gpt-6-astra-fast
     display_name: GPT-6 Astra Fast (Codex)
     use: deerflow.models.openai_codex_provider:CodexChatModel
     model: gpt-6-astra
     service_tier: priority
     none_effort_fallback: low
-    supports_thinking: true
-    supports_reasoning_effort: true
-
-  - name: gpt-6.1-sol-fast
-    display_name: GPT-6.1 Sol Fast (Codex)
-    use: deerflow.models.openai_codex_provider:CodexChatModel
-    model: gpt-6.1-sol
-    service_tier: priority
     supports_thinking: true
     supports_reasoning_effort: true
   # Example: Volcengine (Doubao) model
@@ -1254,10 +1261,6 @@ tools:
 
   # Image search tool (uses DuckDuckGo)
   # Use this to find reference images before image generation
-  - name: image_search
-    group: web
-    use: deerflow.community.image_search.tools:image_search_tool
-    max_results: 5
 
   # Image search tool (uses InfoQuest)
   # - name: image_search
@@ -1452,6 +1455,10 @@ loop_detection:
   max_tracked_threads: 100
   tool_freq_warn: 30
   tool_freq_hard_limit: 50
+  tool_freq_overrides:
+    bash:
+      warn: 80
+      hard_limit: 120
   # Per-tool overrides for tool_freq_warn / tool_freq_hard_limit. Values can be
   # higher or lower than the global defaults. Commonly used to raise thresholds
   # for high-frequency tools like bash in batch workflows (e.g. RNA-seq pipelines)
@@ -1627,17 +1634,6 @@ uploads:
 # or BoxLite micro-VM sandbox
 # Option 1: Local Sandbox (Default)
 # Executes commands directly on the host machine
-# ============================================================================
-# Interaction: clarifying questions in chat runs
-# ============================================================================
-# ask_clarification: false = no-questions mode. The agent never stops to ask
-# clarifying questions: it takes the broadest sensible interpretation, lists
-# its assumptions in the answer, and only confirms high-risk or irreversible
-# actions (at the end of its turn). Sandbox approval cards still work.
-# A run can override it with context.ask_clarification (true/false).
-interaction:
-  ask_clarification: false
-
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider
   # Host bash execution is disabled by default because LocalSandboxProvider is
@@ -1677,6 +1673,10 @@ sandbox:
   # should be started in the background with output redirected; unredirected
   # background output is drained with bounded capture.
   bash_command_timeout: 3600
+  # Non-secret variables for skill scripts (LocalSandbox and AIO alike).
+  environment:
+    VOX_RELAY_URL: http://127.0.0.1:8083
+    JEV_URL: http://127.0.0.1:8084
 
 # Option 2: Container-based AIO Sandbox
 # Executes commands in isolated containers (Docker or Apple Container)
@@ -1907,14 +1907,57 @@ sandbox:
 # Process-wide execution capacity. These fields are restart-required and are
 # shared by ordinary `task` calls and durable batches. Waiting work is async;
 # queued subagents do not occupy a scheduler thread.
+# Vox relay (local-deploy/vox_adaptive_relay.py): holds the Vox key and admits
+# search load adaptively. Paths are relative to the repository root.
+vox_relay:
+  port: 8083
+  key_file: .deployment/vox-api-key
+  state_dir: backend/.deer-flow/vox-relay
+
+# Jev bridge (local-deploy/jev_bridge.py): holds the Jev gateway key and forwards
+# validated requests from skill scripts to the Jev gateway.
+jev_bridge:
+  port: 8084
+  gateway_url: http://127.0.0.1:18791
+  key_file: .deployment/jev-gateway-key
+
 subagent_runtime:
   max_running: 32
   max_queued: 1000
   admission_policy: queue       # queue or reject when all slots are occupied
-  queue_timeout_seconds: 0      # 0 = unlimited
+  queue_timeout_seconds: 0       # no queue deadline; cancellation still works
+
+# Vox research profile; agents retain control of relevance and research decisions.
+lead_prompt_overlay:
+  append: >-
+    For telegram-research, follow the active skill. The lead searches broadly and
+    assigns EVERY discovered relevant group to depth research, one group per agent
+    except documented linked clusters. Use scripts, automation and Jev as useful;
+    batch_task(items_file=...) can submit all unassigned relevant groups with
+    max_running_items=32 and max_live_items=1000. Do not limit coverage to a sample
+    or stop at a report while relevant groups or discoveries remain unresolved.
+    The goal is the complete map requested by the user. Individual network errors
+    do not authorize a blanket ban on further requests for depth agents.
+subagents:
+  timeout_seconds: 0
+  max_total_per_run: 1000
+  token_budget:
+    enabled: false
+  agents:
+    general-purpose:
+      prompt_overlay:
+        append: >-
+          For telegram-research, investigate your assigned group using the active
+          skill and original user question. You may export the group and use
+          scripts, automation and Jev to obtain and analyze the needed evidence.
+          Save sourced facts, new keywords, external links and public business
+          contacts, and add every discovered relevant group to the shared registry.
+          Existing samples do not restrict further collection. Keep unfinished
+          research partial rather than claiming it is complete.
 
 # subagents:
 #   # Default timeout (seconds) for built-in subagents (default: 1800 = 30 min).
+#   # Set 0 for no execution deadline (ordinary tasks and durable batches).
 #   # Custom agents use their own timeout_seconds (default 900) unless overridden.
 #   timeout_seconds: 1800
 #   # Optional global max-turn override for all subagents. One turn is one
@@ -1926,9 +1969,9 @@ subagent_runtime:
 #   # Total number of subagent delegations allowed in one lead-agent run.
 #   # This is a deterministic backstop against repeated planning checkpoints
 #   # launching legal-sized batches forever. The default 6 allows two full
-#   # batches at the default concurrency of 3. Valid config range: 1-50.
+#   # batches at the default concurrency of 3. Valid config range: 1-1000.
 #   # Per-request runtime context can temporarily override this with
-#   # `max_total_subagents`, clamped to the same 1-50 range.
+#   # `max_total_subagents`, clamped to the same 1-1000 range.
 #   max_total_per_run: 6
 #
 #   # Per-run token ceiling for subagents (#3875 Phase 2). A backstop against a
@@ -1986,21 +2029,23 @@ subagent_runtime:
 #   # Set `model` to use a different model (e.g., a local Ollama model for cost savings).
 #   # The model name must match a name defined in the `models:` section above.
 
-# Durable native-subagent batches. Disabled by default because enabling it can
-# materially increase model usage and requires database.backend sqlite/postgres.
+# Durable native-subagent batches for the Vox research workflow.
+# Requires database.backend sqlite/postgres (SQLite is configured below).
 # The three limits are intentionally separate:
 # - total: all persisted items in one batch
 # - live: pending work admitted as queued/running at one time
 # - running: items from one batch allowed to hold real execution slots
 subagent_batches:
-  enabled: false
+  enabled: true
   poll_interval_seconds: 1
   lease_seconds: 120
-  max_items_per_batch: 5000
-  default_max_live_items: 100
+  max_items_per_batch: 1000
+  # Cumulative submitted items across all batches in one lead run (terminal items count).
+  max_items_per_run: 1000
+  default_max_live_items: 1000
   max_live_items_per_batch: 1000
-  default_max_running_items: 3
-  max_running_items_per_batch: 64
+  default_max_running_items: 32
+  max_running_items_per_batch: 32
   max_attempts: 3
   max_result_chars: 100000
   result_preview_max_chars: 2000
@@ -2163,9 +2208,8 @@ summarization:
   # Context retention policy after summarization
   # Specifies how much recent history to preserve
   keep:
-    # Keep the most recent 10 messages (recommended)
-    type: messages
-    value: 10
+    type: tokens
+    value: 65536
     # Alternative: Keep specific token count
     # type: tokens
     # value: 3000
@@ -2175,7 +2219,7 @@ summarization:
 
   # Maximum tokens to keep when preparing messages for summarization
   # Set to null to skip trimming (not recommended for very long conversations)
-  trim_tokens_to_summarize: 15564
+  trim_tokens_to_summarize: null
 
   # Custom summary prompt template (null = use default LangChain prompt)
   # The prompt should guide the model to extract important context
@@ -2234,7 +2278,7 @@ summarization:
 #                                    overflow and LLM misfire from permanently deferring a fact.
 #                                    (default: 3650, range: 90-36500)
 memory:
-  enabled: true
+  enabled: false
   injection_enabled: true # Whether to inject memory into system prompt
   # Hard budget (seconds) to drain pending memory updates on Gateway graceful
   # shutdown. Each pending item does one LLM call, so large IM batches may need
@@ -3286,6 +3330,10 @@ run_ownership:
 #           skills: {allow: []}      # no skills visible in the listing
 #           plugin_actions: {allow: ["acme.reports/export"]}
 #           plugin_management: {allow: ["acme.reports/permissions.read"]}
+auth:
+  local:
+    allow_registration: false
+
 authorization:
   enabled: false
 
@@ -3493,13 +3541,3 @@ authorization:
 #                                         # also match a host-owned table name.
 #     config:
 #       label: example                    # extension-private values, if any
-
-# Local: subagents run on GPT-6.1 Sol Fast, lead agent uses models[0] (GPT-6 Astra Fast)
-subagents:
-  timeout_seconds: 0            # 0 = unlimited
-  max_total_per_run: 1000
-  agents:
-    general-purpose:
-      model: gpt-6.1-sol-fast
-    bash:
-      model: gpt-6.1-sol-fast

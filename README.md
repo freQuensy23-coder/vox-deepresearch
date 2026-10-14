@@ -2941,10 +2941,6 @@ Your unwavering commitment and expertise have been the driving force behind Deer
 
 [![Star History Chart](https://star-history.dera.page/svg?repos=bytedance/deer-flow&type=Date)](https://star-history.dera.page/#bytedance/deer-flow&Date)
 
-The native RunPod deployment starts with `python3 local-deploy/runpod_native.py` after restoring the verified runtime and data to `/workspace/vox-openclaw-dp`. The launcher uses local command execution, the existing Vox relay and Jev services, and the preserved deployment credentials.
-
-Native Vox research runs without another VM or container. Agents receive the
-assigned-folder write instruction in their prompts; Bash does not scan command
-text for paths. Scheduler and channel settings are preserved by the native launcher.
+The native RunPod deployment starts with `python3 local-deploy/runpod_native.py`; see [local-deploy/README.md](local-deploy/README.md).
 The shared research registry records agent decisions without judging fact-sheet
 word counts, source-URL formatting or search-result JSON status.

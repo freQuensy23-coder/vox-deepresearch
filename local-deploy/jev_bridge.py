@@ -1,20 +1,17 @@
-import argparse
-import fcntl
 import http.client
 import importlib.util
 import json
-import os
 import re
-import socket
 import socketserver
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+import deploy_config
+
 
 MAX_BYTES = 16 * 1024 * 1024
 MAX_RESPONSE = 16 * 1024 * 1024
-SOCKET_PATH = "/home/private/.local/share/jev-agent-bridge/bridge.sock"
 
 
 class BridgeError(Exception):
@@ -104,26 +101,13 @@ def validate(method, path, body):
         raise BridgeError(422, "invalid_typed_request") from None
 
 
-class UnixConnection(http.client.HTTPConnection):
-    def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(self.timeout)
-        self.sock.connect(self.host)
-
-
 def forward(
-    method, path, body, key=None, connection_factory=http.client.HTTPConnection
+    method, path, body, key, gateway, connection_factory=http.client.HTTPConnection
 ):
     validate(method, path, body)
-    connection = (
-        connection_factory("127.0.0.1", 18791, timeout=130)
-        if key
-        else UnixConnection(SOCKET_PATH, timeout=135)
-    )
+    connection = connection_factory(gateway.hostname, gateway.port or 80, timeout=130)
     try:
-        headers = {"Content-Type": "application/json"}
-        if key:
-            headers["Authorization"] = "Bearer " + key
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + key}
         connection.request(method, path, body=body or None, headers=headers)
         response = connection.getresponse()
         raw = response.read(MAX_RESPONSE + 1)
@@ -168,7 +152,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(int(length))
             if len(body) != int(length):
                 raise BridgeError(400, "incomplete_request")
-            status, raw = forward(self.command, self.path, body, self.server.key)
+            status, raw = forward(self.command, self.path, body, self.server.key, self.server.gateway)
         except BridgeError as error:
             status, raw = (
                 error.status,
@@ -189,41 +173,18 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = dispatch
 
 
-class UnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
-    daemon_threads = True
-
-
-class InternalServer(socketserver.ThreadingMixIn, HTTPServer):
+class BridgeServer(socketserver.ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("host", "internal"))
-    args = parser.parse_args()
-    if args.mode == "host":
-        directory = Path(SOCKET_PATH).parent
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(directory, 0o700)
-        lock = os.open(
-            directory / "bridge.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600
-        )
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        with Path("/home/private/.hermes/credentials/jev-gateway.env").open() as stream:
-            key = next(
-                line.split("=", 1)[1].strip().strip('"').strip("'")
-                for line in stream
-                if line.startswith("JEV_GATEWAY_API_KEY=")
-            )
-        if not key or "\n" in key or "\r" in key:
-            raise ValueError("Invalid consumer key")
-        Path(SOCKET_PATH).unlink(missing_ok=True)
-        server = UnixServer(SOCKET_PATH, Handler)
-        os.chmod(SOCKET_PATH, 0o600)
-        server.key = key
-    else:
-        server = InternalServer(("172.30.78.20", 8084), Handler)
-        server.key = None
+    config = deploy_config.section("jev_bridge")
+    key = deploy_config.path(config["key_file"]).read_text(encoding="utf-8").strip()
+    if not key or "\n" in key or "\r" in key:
+        raise ValueError("Invalid Jev gateway key")
+    server = BridgeServer(("127.0.0.1", int(config["port"])), Handler)
+    server.key = key
+    server.gateway = urlsplit(config["gateway_url"])
     try:
         server.serve_forever()
     finally:

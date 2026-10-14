@@ -1,4 +1,8 @@
-"""Start Vox services directly in RunPod using native local command execution."""
+"""Start the research services natively on the RunPod host.
+
+All service settings come from the repository's config.yaml. Secrets live in
+`.deployment/` next to it (never committed).
+"""
 
 import json
 import os
@@ -10,182 +14,105 @@ os.umask(0o077)
 base = Path("/workspace/vox-openclaw-dp")
 source = base / "home/private/vox-deepresearch"
 native = Path("/opt/vox/native-runtime")
-app = native / "app"
+app = native / "app"  # prebuilt venv and frontend; the venv expects to live at /app
+home = base / "native-home"
 logs = base / "migration/native-logs"
-logs.mkdir(exist_ok=True)
-if not Path("/app").exists():
-    Path("/app").symlink_to(app)
-elif Path("/app").resolve() != app.resolve():
-    raise RuntimeError("Existing /app is unrelated; refusing to replace it")
-for destination, target in [
-    (app / "backend/.deer-flow", source / "runtime"),
-    (app / "skills", source / "skills"),
-]:
+pid_file = base / "migration/native-pids.json"
+GATEWAY_UID = 1001
+
+
+def link(destination, target):
     if not destination.exists():
         destination.symlink_to(target)
     elif destination.resolve() != target.resolve():
-        raise RuntimeError(f"Unexpected existing destination {destination}")
-secret_dir = Path("/run/secrets")
-secret_dir.mkdir(exist_ok=True)
-os.chmod(secret_dir, 0o711)
-credential = secret_dir / "codex-auth.json"
-credential_temp = secret_dir / "codex-auth.json.deploy"
-shutil.copyfile(source / ".deployment/codex-auth.json", credential_temp)
-os.chown(credential_temp, 1001, 1001)
-os.chmod(credential_temp, 0o600)
-os.replace(credential_temp, credential)
-interpreter = native / "usr/local/bin/python3.12"
-local_python = Path("/usr/local/bin/python3.12")
-if not local_python.exists():
-    local_python.symlink_to(interpreter)
-containers = json.loads((base / "migration/containers.json").read_text())
+        raise RuntimeError(f"Unexpected existing {destination}")
+
+
+logs.mkdir(exist_ok=True)
+home.mkdir(exist_ok=True)
+os.chown(home, GATEWAY_UID, GATEWAY_UID)
+link(Path("/app"), app)
+if not Path("/usr/local/bin/python3.12").exists():
+    Path("/usr/local/bin/python3.12").symlink_to(native / "usr/local/bin/python3.12")
+link(source / "backend/.deer-flow", source / "runtime")
+
+codex_dir = home / ".codex"
+codex_dir.mkdir(exist_ok=True)
+os.chown(codex_dir, GATEWAY_UID, GATEWAY_UID)
+credential = codex_dir / "auth.json"
+staged = codex_dir / "auth.json.deploy"
+shutil.copyfile(source / ".deployment/codex-auth.json", staged)
+os.chown(staged, GATEWAY_UID, GATEWAY_UID)
+os.chmod(staged, 0o600)
+os.replace(staged, credential)
+
 python = app / "backend/.venv/bin/python"
-python_paths = ":".join(
-    str(p)
-    for p in [
-        source / "backend",
-        source / "backend/packages/harness",
-        source / "backend/packages/extension-api",
-        app / "backend/.venv/lib/python3.12/site-packages",
-    ]
-)
-env_base = {
+env = {
     "PATH": f"{native}/usr/bin:{app}/backend/.venv/bin:/usr/local/bin:/usr/bin:/bin",
     "LD_LIBRARY_PATH": str(native / "usr/local/lib"),
     "PYTHONHOME": str(native / "usr/local"),
-    "PYTHONPATH": python_paths,
+    "PYTHONPATH": ":".join(
+        str(p)
+        for p in [
+            source / "backend",
+            source / "backend/packages/harness",
+            source / "backend/packages/extension-api",
+            app / "backend/.venv/lib/python3.12/site-packages",
+        ]
+    ),
+    "HOME": str(home),
 }
-pid_file = base / "migration/native-pids.json"
+
+
+def drop_to_gateway_user():
+    os.setgroups([])
+    os.setgid(GATEWAY_UID)
+    os.setuid(GATEWAY_UID)
+
+
+jev_gateway_env = dict(env, JEV_GATEWAY_DATABASE=str(home / "jev-gateway.sqlite3"))
+jev_gateway_env["PYTHONPATH"] = f"{base}/home/private/jev-gateway:{env['PYTHONPATH']}"
+for filename in ("jev-gateway.env", "opencode-go.env"):
+    for line in (source / ".deployment" / filename).read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            jev_gateway_env[key] = value.strip().strip('"').strip("'")
+
+services = {
+    "vox-relay": ([str(python), "local-deploy/vox_adaptive_relay.py"], source, env, None),
+    "jev-gateway": ([str(python), "-m", "jev_gateway"], source, jev_gateway_env, None),
+    "jev-bridge": ([str(python), "local-deploy/jev_bridge.py"], source, env, None),
+    "gateway": (
+        [str(python), "-m", "uvicorn", "app.gateway.app:app", "--host", "127.0.0.1", "--port", "18091"],
+        source / "backend",
+        env,
+        drop_to_gateway_user,
+    ),
+    "proxy": (["nginx", "-c", str(source / "local-deploy/runpod-nginx.conf")], source, env, None),
+    "frontend": (
+        [str(native / "usr/bin/node"), str(app / "frontend/node_modules/next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", "3000"],
+        app / "frontend",
+        dict(env, NODE_ENV="production", DEER_FLOW_INTERNAL_GATEWAY_BASE_URL="http://127.0.0.1:18091"),
+        None,
+    ),
+}
+
 started = json.loads(pid_file.read_text()) if pid_file.exists() else {}
-for role in ["vox-relay", "gateway", "frontend"]:
+for role, (command, cwd, role_env, preexec) in services.items():
     previous = started.get(role)
     if previous and Path(f"/proc/{previous}/cmdline").exists():
         continue
-    match = next(c for c in containers if c["Name"] == f"/vox-deepresearch-{role}-1")
-    env = dict(
-        value.split("=", 1) for value in match["Config"].get("Env", []) if "=" in value
-    )
-    env.update(env_base)
-    env["BASH_ENV"] = "/dev/null"
-    env["ENV"] = "/dev/null"
-    for ssh_marker in ("SSH_CLIENT", "SSH_CONNECTION", "SSH_TTY"):
-        env.pop(ssh_marker, None)
-    env["HOME"] = str(base / "native-home")
-    Path(env["HOME"]).mkdir(exist_ok=True)
-    if role == "gateway":
-        os.chown(env["HOME"], 1001, 1001)
-    if role == "gateway":
-        env["PYTHONPATH"] = python_paths
-        env["VOX_RELAY_URL"] = "http://127.0.0.1:8083"
-        env["DEER_FLOW_HOME"] = str(source / "runtime")
-        env["DEER_FLOW_CONFIG_PATH"] = str(source / "config.yaml")
-        command = [
-            str(python),
-            "-m",
-            "uvicorn",
-            "app.gateway.app:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "18091",
-        ]
-        cwd = source / "backend"
-    elif role == "frontend":
-        command = [
-            str(native / "usr/bin/node"),
-            str(app / "frontend/node_modules/next/dist/bin/next"),
-            "start",
-            "--hostname",
-            "127.0.0.1",
-            "--port",
-            "3000",
-        ]
-        cwd = app / "frontend"
-    else:
-        env["VOX_RELAY_HOST"] = "127.0.0.1"
-        for key, value in list(env.items()):
-            for old, new in [
-                ("/run/secrets/vox-api-key", str(source / ".deployment/vox-api-key")),
-                (
-                    "/var/lib/vox-relay-adaptive-state",
-                    str(source / "runtime/vox-relay-adaptive-state-v6"),
-                ),
-                ("/var/lib/vox-relay-state", str(source / "runtime/vox-relay-state")),
-                (
-                    "/app/vox-scripts",
-                    str(source / "skills/public/telegram-research/scripts"),
-                ),
-            ]:
-                value = value.replace(old, new)
-            env[key] = value
-        command = [str(python), str(source / "local-deploy/vox_adaptive_relay.py")]
-        cwd = source / "local-deploy"
     with (logs / f"{role}.log").open("ab") as output:
-
-        def gateway_identity():
-            os.setgroups([])
-            os.setgid(1001)
-            os.setuid(1001)
-
         child = subprocess.Popen(
             command,
             cwd=cwd,
-            env=env,
+            env=role_env,
             stdin=subprocess.DEVNULL,
             stdout=output,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            preexec_fn=gateway_identity if role == "gateway" else None,
-        )
-    started[role] = child.pid
-(base / "migration/native-pids.json").write_text(json.dumps(started, indent=2))
-print(
-    json.dumps(
-        {
-            "started": started,
-            "sandbox_provider": "LocalSandboxProvider; native commands",
-        }
-    ),
-    flush=True,
-)
-
-# Native Jev provider and bridge; existing consumer credentials stay private.
-credentials = base / "home/private/.hermes/credentials"
-jev_env = {**os.environ, **env_base, "HOME": str(base / "native-home")}
-jev_env["PYTHONPATH"] = str(base / "home/private/jev-gateway") + ":" + python_paths
-jev_env["JEV_GATEWAY_DATABASE"] = str(base / "native-home/jev-gateway.sqlite3")
-for filename in ("jev-gateway.env", "opencode-go.env"):
-    for line in (credentials / filename).read_text(encoding="utf-8").splitlines():
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            jev_env[key] = value.strip().strip('"').strip("'")
-bridge_script = """
-import importlib.util, os
-from pathlib import Path
-path=Path('/workspace/vox-openclaw-dp/home/private/vox-deepresearch/local-deploy/jev_bridge.py')
-spec=importlib.util.spec_from_file_location('native_jev_bridge',path)
-m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-server=m.InternalServer(('127.0.0.1',8084),m.Handler)
-server.key=os.environ['JEV_GATEWAY_API_KEY']
-server.serve_forever()
-"""
-for role, command in [
-    ("jev-gateway", [str(python), "-m", "jev_gateway"]),
-    ("jev-bridge", [str(python), "-c", bridge_script]),
-]:
-    previous = started.get(role)
-    if previous and Path(f"/proc/{previous}/cmdline").exists():
-        continue
-    with (logs / f"{role}.log").open("ab") as output:
-        child = subprocess.Popen(
-            command,
-            cwd=source,
-            env=jev_env,
-            stdin=subprocess.DEVNULL,
-            stdout=output,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
+            preexec_fn=preexec,
         )
     started[role] = child.pid
 pid_file.write_text(json.dumps(started, indent=2), encoding="utf-8")
-print(json.dumps({"native_services": list(started)}), flush=True)
+print(json.dumps({"started": started}), flush=True)

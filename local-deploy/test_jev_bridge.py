@@ -1,12 +1,15 @@
 import importlib.util
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
 
 PATH = Path(__file__).parent / "jev_bridge.py"
 
+
+GATEWAY = urlsplit("http://127.0.0.1:18791")
 
 def load():
     assert PATH.exists(), "narrow Jev bridge missing"
@@ -121,7 +124,7 @@ def test_batch_policy_forwarding_preserves_gateway_defaults_and_agent_values(pol
             pass
 
     assert module.forward(
-        "POST", "/v1/batches", raw, "synthetic-key", connection_factory=Gateway
+        "POST", "/v1/batches", raw, "synthetic-key", GATEWAY, connection_factory=Gateway
     ) == (202, b'{"id":"synthetic"}')
     assert calls == [
         (
@@ -146,14 +149,15 @@ def test_more_than_four_concurrent_requests_complete(monkeypatch):
 
     calls = []
 
-    def forward(method, path, body, key):
+    def forward(method, path, body, key, gateway):
         calls.append((method, path, body, key))
         time.sleep(0.3)
         return 200, b'{"models":[]}'
 
     monkeypatch.setattr(module, "forward", forward)
-    server = module.InternalServer(("127.0.0.1", 0), module.Handler)
+    server = module.BridgeServer(("127.0.0.1", 0), module.Handler)
     server.key = "synthetic-key"
+    server.gateway = GATEWAY
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
 
@@ -191,7 +195,7 @@ def test_missing_gateway_returns_explicit_unavailable_without_secret():
             pass
 
     status, body = module.forward(
-        "GET", "/v1/models", b"", "dummy-secret", connection_factory=Missing
+        "GET", "/v1/models", b"", "dummy-secret", GATEWAY, connection_factory=Missing
     )
     assert status == 503
     assert "dummy-secret" not in body.decode()
