@@ -95,11 +95,15 @@ if not codex_login.exists():
     for path in (codex_login.parent, codex_login):
         os.chown(path, GATEWAY_UID, GATEWAY_UID)
     os.chmod(codex_login, 0o600)
-deer_flow = source / "backend/.deer-flow"
-if not deer_flow.exists():
-    deer_flow.symlink_to(source / "runtime")
-
 stop_all()
+
+# Runtime data lives in backend/.deer-flow, as in a local checkout. It used to be
+# runtime/ behind a symlink, which the trace writers reject.
+deer_flow = source / "backend/.deer-flow"
+if deer_flow.is_symlink():
+    deer_flow.unlink()
+if (source / "runtime").is_dir() and not deer_flow.exists():
+    (source / "runtime").rename(deer_flow)
 
 started = {}
 for role, (command, cwd, role_env, preexec) in services.items():

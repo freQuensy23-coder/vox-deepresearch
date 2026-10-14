@@ -2,7 +2,7 @@
 
 Uses the embedded DeerFlowClient with the same checkpointer and thread store as
 the Gateway, so the thread appears in that user's Web UI. Events stream to
-runtime/research-runs/<thread_id>.jsonl.
+backend/.deer-flow/research-runs/<thread_id>.jsonl.
 
     cd backend && .venv/bin/python ../local-deploy/research.py USER_ID PROMPT_FILE
 """

@@ -72,4 +72,3 @@ config.yaml.bak
 # Production interpreter installed by scripts/deploy-prod.sh
 /.uv-python/
 /.node/
-/runtime/
