@@ -69,6 +69,6 @@ config.yaml.bak
 # Monocle agent-observability trace output (local file exporter)
 .monocle/
 
-# Production interpreter installed by scripts/deploy.sh
+# Production interpreter installed by scripts/deploy-prod.sh
 /.uv-python/
 /runtime/

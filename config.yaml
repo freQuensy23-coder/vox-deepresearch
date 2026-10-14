@@ -1907,8 +1907,8 @@ sandbox:
 # Process-wide execution capacity. These fields are restart-required and are
 # shared by ordinary `task` calls and durable batches. Waiting work is async;
 # queued subagents do not occupy a scheduler thread.
-# Production. Deploy only with scripts/deploy.sh (main, pushed). The prod SSH key
-# lives on the jump host; deploy.sh runs `ssh <jump> <target_ssh> ...`.
+# Production. Deploy only with scripts/deploy-prod.sh (main, pushed). The prod SSH key
+# lives on the jump host; deploy-prod.sh runs `ssh <jump> <target_ssh> ...`.
 deploy:
   jump: openclaw-dp
   target_ssh: ssh -F /home/private/.ssh/config.d/vox-prod.conf vox-prod

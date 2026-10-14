@@ -24,7 +24,7 @@ searches inside it.
 - Jev gateway (`jev-gateway/`) and Jev bridge (`local-deploy/jev_bridge.py`).
 - DeerFlow Gateway and frontend. `make dev` starts everything locally.
 
-**Production** is deployed only with `scripts/deploy.sh` from the pushed
+**Production** is deployed only with `scripts/deploy-prod.sh` from the pushed
 `main`; see [local-deploy/README.md](local-deploy/README.md).
 
 Example request:

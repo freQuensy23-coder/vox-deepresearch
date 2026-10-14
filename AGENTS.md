@@ -2,7 +2,7 @@
 
 This is the source of truth for repository agent guidance; `CLAUDE.md` imports it via `@AGENTS.md`.
 
-**Deploy:** production is deployed only with `scripts/deploy.sh` from the pushed `main` — never by hand (no manual ssh edits, copies or restarts on the prod host).
+**Deploy:** production is deployed only with `scripts/deploy-prod.sh` from the pushed `main` — never by hand (no manual ssh edits, copies or restarts on the prod host).
 
 **Vox:** all Vox access goes through exactly one fire-based CLI, `skills/public/telegram-research/scripts/vox.py`, which calls only our Vox proxy (`local-deploy/vox_relay.py`, rate limiting) — no other Vox scripts or clients.
 

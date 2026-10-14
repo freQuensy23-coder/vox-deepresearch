@@ -1,7 +1,7 @@
-"""(Re)start every research service on the RunPod host. Run by scripts/deploy.sh.
+"""(Re)start every research service on the RunPod host. Run by scripts/deploy-prod.sh.
 
 Python comes from backend/.venv (uv sync), the frontend from frontend/build
-(Next standalone, built by deploy.sh). Settings come from config.yaml, secrets
+(Next standalone, built by deploy-prod.sh). Settings come from config.yaml, secrets
 from .env; the Codex login is the service user's ~/.codex/auth.json.
 """
 
