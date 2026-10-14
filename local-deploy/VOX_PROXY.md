@@ -2,7 +2,9 @@
 
 `vox_relay.py` is the only Vox proxy; `scripts/serve.sh` and `runpod_native.py`
 start it, and `skills/public/telegram-research/scripts/vox.py` is its only client.
-No adaptive flag, controller, file locks, calibration, request spacing, or
+It forwards only two Vox APIs — `/search/text` and
+`/user_tracker/{user_id}/panels/messages` (limit up to 100000; public chats
+only) — and refuses every other path and method. No adaptive flag, controller, file locks, calibration, request spacing, or
 separate metadata lane is used. Queue admission has no filesystem state.
 
 1. Vox HTTP errors, transport failures, and incomplete/error-bearing search

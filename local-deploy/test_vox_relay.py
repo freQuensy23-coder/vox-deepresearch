@@ -208,77 +208,22 @@ def test_denials_never_open_upstream(relays, upstream, path, method, headers, bo
     assert not upstream.starts
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "/search/ai/raw/GROUP?query=test&limit=10&offset=0",
+def test_only_search_and_whale_messages_reach_vox(relays, upstream):
+    server = relays()
+    assert request(server, "/search/text?query=test")[0] == 200
+    assert request(server, "/user_tracker/123/panels/messages?limit=100000")[0] == 200
+    for path in (
+        "/search/ai/raw/GROUP?query=test&limit=10",
         "/groups/-1001",
-        "/groups/-1001/messages?messages_limit=10&messages_min=1&members_min=0",
+        "/groups/-1001/messages?messages_limit=10",
         "/ai_analytics/GROUP/-1001",
-        "/ai_analytics/custom/GROUP/-1001?custom_prompt=test",
         "/user_tracker/123/panels/groups",
         "/user_tracker/123/panels/top_groups?limit=10",
-        "/user_tracker/123/panels/messages?limit=10",
-    ],
-)
-def test_cli_get_endpoints_are_allowed(relays, path):
-    assert request(relays(), path)[0] == 200
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {
-            "groups_search_query": "test",
-            "run_parser": False,
-            "find_new_users": False,
-            "new_users_limit": 0,
-        },
-    ],
-)
-def test_safe_post_body_is_allowed(relays, upstream, body):
-    assert (
-        request(
-            relays(),
-            "/reporter/parse",
-            "POST",
-            json.dumps(body),
-            {"Content-Type": "application/json"},
-        )[0]
-        == 200
-    )
-    assert json.loads(upstream.requests[0][3]) == body
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {},
-        {"run_parser": True, "find_new_users": False, "new_users_limit": 0},
-        {"run_parser": False, "find_new_users": True, "new_users_limit": 0},
-        {"run_parser": False, "find_new_users": False, "new_users_limit": 1},
-        {"run_parser": "false", "find_new_users": False, "new_users_limit": 0},
-        {"run_parser": False, "find_new_users": False, "new_users_limit": False},
-        {
-            "run_parser": False,
-            "find_new_users": False,
-            "new_users_limit": 0,
-            "destination": "evil",
-        },
-    ],
-)
-def test_unsafe_post_never_opens_upstream(relays, upstream, body):
-    assert (
-        request(
-            relays(),
-            "/reporter/parse",
-            "POST",
-            json.dumps(body),
-            {"Content-Type": "application/json"},
-        )[0]
-        == 400
-    )
-    assert not upstream.starts
+        "/user_tracker/123/panels/messages?limit=100001",
+    ):
+        assert request(server, path)[0] in {400, 403}, path
+    assert request(server, "/reporter/parse", "POST", b"{}", {"Content-Type": "application/json"})[0] == 405
+    assert len(upstream.starts) == 2
 
 
 def test_health_and_status_do_not_contact_upstream(relays, upstream):
@@ -288,12 +233,6 @@ def test_health_and_status_do_not_contact_upstream(relays, upstream):
     assert state["active"] == 0 and state["queued"] == 0
     assert "key" not in json.dumps(state)
     assert not upstream.starts
-
-
-def test_legacy_query_only_safe_post_is_allowed(relays, upstream):
-    path = "/reporter/parse?groups_search_query=test&run_parser=false&find_new_users=false&new_users_limit=0"
-    assert request(relays(), path, "POST")[0] == 200
-    assert upstream.requests[0][1] == path
 
 
 def test_real_vox_cli_uses_relay_without_upstream_key(relays, tmp_path, upstream):
@@ -317,8 +256,6 @@ def test_real_vox_cli_uses_relay_without_upstream_key(relays, tmp_path, upstream
             "2026-01-01",
             "--until",
             "2026-02-01",
-            "--out",
-            str(tmp_path / "receipt.json"),
         ],
         cwd=tmp_path,
         env=env,
@@ -327,7 +264,7 @@ def test_real_vox_cli_uses_relay_without_upstream_key(relays, tmp_path, upstream
         timeout=5,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads((tmp_path / "receipt.json").read_text())["messages"] == []
+    assert json.loads((tmp_path / "messages_raw.json").read_text())["messages"] == []
     assert (
         upstream.requests[0][2]["Authorization"] == "Bearer synthetic-relay-owned-key"
     )

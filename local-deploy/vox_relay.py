@@ -24,17 +24,7 @@ DEFAULTS = dict(client_timeout=30.0)
 MAX_TARGET = 8192
 MAX_HEADERS = 16384
 MAX_BODY = 16384
-INTEGER_BOUNDS = dict(
-    limit=(1, 10000),
-    offset=(0, 10000),
-    timeout=(10, 600),
-    messages_limit=(1, 100),
-    messages_min=(1, 1),
-    members_min=(0, 0),
-    groups_limit=(1, 50),
-    groups_offset=(0, 1000),
-    new_users_limit=(0, 0),
-)
+INTEGER_BOUNDS = dict(limit=(1, 10000), timeout=(10, 600))
 SEARCH_FIELDS = {
     "query",
     "limit",
@@ -49,15 +39,6 @@ SEARCH_FIELDS = {
     "deduplicate",
     "timeout",
     "stream",
-}
-PREVIEW_FIELDS = {
-    "groups_search_query",
-    "groups_limit",
-    "groups_offset",
-    "groups_regex",
-    "run_parser",
-    "find_new_users",
-    "new_users_limit",
 }
 REQUEST_HEADERS = {
     "host",
@@ -88,31 +69,17 @@ def unique_object(pairs):
     return result
 
 
-def validate_fields(values, allowed, path, json_body=False):
+def validate_fields(values, allowed, path):
     if not set(values) <= allowed:
         raise Rejected(400)
     for name, value in values.items():
-        if name in {"run_parser", "find_new_users"}:
-            if value is not False if json_body else value != "false":
+        if name in INTEGER_BOUNDS:
+            if not re.fullmatch(r"[0-9]{1,19}", value):
                 raise Rejected(400)
-        elif name in INTEGER_BOUNDS:
-            if json_body:
-                if type(value) is not int:
-                    raise Rejected(400)
-                number = value
-            else:
-                if not re.fullmatch(r"[0-9]{1,19}", value):
-                    raise Rejected(400)
-                number = int(value)
+            number = int(value)
             low, high = INTEGER_BOUNDS[name]
-            if name == "limit":
-                high = (
-                    1000
-                    if path == "/search/ai/raw/GROUP"
-                    else 500
-                    if path.startswith("/user_tracker/")
-                    else high
-                )
+            if name == "limit" and path.startswith("/user_tracker/"):
+                high = 100000
             if not low <= number <= high:
                 raise Rejected(400)
         else:
@@ -149,12 +116,6 @@ def validate_fields(values, allowed, path, json_body=False):
                     raise Rejected(400)
                 if any(abs(int(number)) > 2**63 - 1 for number in value.split(",")):
                     raise Rejected(400)
-    if path == "/reporter/parse" and not {
-        "run_parser",
-        "find_new_users",
-        "new_users_limit",
-    } <= set(values):
-        raise Rejected(400)
 
 
 def validate_target(method, target):
@@ -170,7 +131,7 @@ def validate_target(method, target):
     parts = urllib.parse.urlsplit(target)
     if parts.scheme or parts.netloc or "%" in parts.path:
         raise Rejected(400)
-    if method not in {"GET", "POST"}:
+    if method != "GET":
         raise Rejected(405)
     if re.search(r"%(?![0-9A-Fa-f]{2})", parts.query):
         raise Rejected(400)
@@ -187,29 +148,13 @@ def validate_target(method, target):
     except (ValueError, UnicodeError):
         raise Rejected(400) from None
     path = parts.path
-    if method == "POST":
-        if path != "/reporter/parse":
-            raise Rejected(405)
-        if values:
-            validate_fields(values, PREVIEW_FIELDS, path)
-        return path, values
+    # Research needs exactly two Vox APIs: text search and a user's messages in
+    # public chats (user_tracker messages panel). Everything else is refused.
     if path in {"/health", "/status"}:
         allowed = set()
     elif path == "/search/text":
         allowed = SEARCH_FIELDS
-    elif path == "/search/ai/raw/GROUP":
-        allowed = {"query", "limit", "offset"}
-    elif re.fullmatch(r"/groups/-[1-9][0-9]{0,18}", path):
-        allowed = set()
-    elif re.fullmatch(r"/groups/-[1-9][0-9]{0,18}/messages", path):
-        allowed = {"messages_limit", "messages_min", "members_min"}
-    elif re.fullmatch(r"/ai_analytics/GROUP/-[1-9][0-9]{0,18}", path):
-        allowed = set()
-    elif re.fullmatch(r"/ai_analytics/custom/GROUP/-[1-9][0-9]{0,18}", path):
-        allowed = {"custom_prompt"}
-    elif re.fullmatch(
-        r"/user_tracker/[1-9][0-9]{0,18}/panels/(groups|top_groups|messages)", path
-    ):
+    elif re.fullmatch(r"/user_tracker/[1-9][0-9]{0,18}/panels/messages", path):
         allowed = {"limit"}
     else:
         raise Rejected(403)
@@ -409,26 +354,10 @@ class RequestObservation:
         self.body_bytes += len(chunk)
 
     def route(self, path):
-        routes = {
-            "/search/text": "search_text",
-            "/search/ai/raw/GROUP": "search_group",
-            "/reporter/parse": "reporter_preview",
-            "/health": "health",
-            "/status": "status",
-        }
+        routes = {"/search/text": "search_text", "/health": "health", "/status": "status"}
         self.route_class = routes.get(path, "unknown")
-        for pattern, name in (
-            (r"/groups/-[0-9]+", "group"),
-            (r"/groups/-[0-9]+/messages", "group_messages"),
-            (r"/ai_analytics/GROUP/-[0-9]+", "group_analytics"),
-            (r"/ai_analytics/custom/GROUP/-[0-9]+", "group_custom_analytics"),
-            (r"/user_tracker/[0-9]+/panels/groups", "user_groups"),
-            (r"/user_tracker/[0-9]+/panels/top_groups", "user_top_groups"),
-            (r"/user_tracker/[0-9]+/panels/messages", "user_messages"),
-        ):
-            if re.fullmatch(pattern, path):
-                self.route_class = name
-                break
+        if re.fullmatch(r"/user_tracker/[0-9]+/panels/messages", path):
+            self.route_class = "user_messages"
 
     def emit(self, event):
         now = time.monotonic()
@@ -698,23 +627,6 @@ class RelayHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length) if length else None
         if body is not None and len(body) != length:
             raise Rejected(400)
-        if self.command == "POST":
-            if body is not None:
-                if (
-                    values
-                    or self.headers.get("Content-Type", "").split(";")[0].lower()
-                    != "application/json"
-                ):
-                    raise Rejected(400)
-                try:
-                    data = json.loads(body, object_pairs_hook=unique_object)
-                    if not isinstance(data, dict):
-                        raise ValueError("invalid body")
-                    validate_fields(data, PREVIEW_FIELDS, path, json_body=True)
-                except (ValueError, UnicodeError):
-                    raise Rejected(400) from None
-            elif not values:
-                raise Rejected(400)
         return path, body
 
     def prepare_request(self):

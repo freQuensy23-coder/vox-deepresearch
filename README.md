@@ -4,15 +4,16 @@ Vox DeepResearch is a fork of [DeerFlow](https://github.com/bytedance/deer-flow)
 for agent-driven research of public Telegram discussions through Vox.
 
 **Research pipeline** ([SKILL.md](skills/public/telegram-research/SKILL.md)):
-keyword message search over the requested period, semantic group search, Jev
-filtering of messages with eye review and re-runs, ranking of the top 16 groups,
-one subagent per group that runs detailed searches inside it over a wider word
-list (summary, external links and contacts, active participants, new keywords),
-and new rounds while new keywords appear. The agent chooses keywords, the Jev instruction and when to stop.
+keyword message search over the requested period into one deduplicated pool
+(`messages_raw.json`), Jev filtering into `messages_filtered.json` with a
+one-pass review of up to 100 examples and re-runs, then two subagents: one adds
+new keywords, the other picks 5–25 whales (topic leaders) into `registry.json`.
+The whales' messages in public chats join the pool, and the rounds repeat. The
+agent chooses keywords, the Jev instruction and when to stop.
 
 **Tools.** `skills/public/telegram-research/scripts/vox.py` is the only Vox
-client; `scripts/jev.py` talks to the Jev bridge. Vox has no endpoint for a
-group's full history; `vox.py search --group` searches inside one group.
+client; `scripts/jev.py` talks to the Jev bridge. The proxy lets through only
+two Vox APIs: text search and a user's messages in public chats.
 
 **Services**, all configured in `config.yaml` with secrets in the root `.env`:
 

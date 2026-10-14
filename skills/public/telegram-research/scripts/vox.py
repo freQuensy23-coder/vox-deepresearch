@@ -3,27 +3,32 @@
 through the Vox proxy at VOX_RELAY_URL. The proxy sends one request to Vox at a
 time, retries failures itself and returns only complete results. If one Vox call
 runs past its time limit, the command fails with the proxy's advice to narrow
-the date interval; choosing smaller windows (--since/--until, separate --out)
-is the caller's decision.
+the date interval; choosing smaller windows (--since/--until) is the caller's
+decision.
 
-Each command saves JSON and prints its path. Commands that page through dates
-checkpoint after every page and resume from the same output file.
+Run from the research folder. It holds:
+    registry.json       keywords and whales with their status
+    messages_raw.json   every message Vox returned, deduplicated, with sources
 
-    vox.py search QUERY --since 2025-10-14 [--until ...] [--kind all|post|comment] [--group GROUP_ID]
-    vox.py semantic QUERY [--limit 50]
-    vox.py group GROUP_ID
-    vox.py authors GROUP_ID SEARCH.json [SEARCH2.json ...] [--top 30]
-    vox.py rank RELEVANT.json SEMANTIC.json [SEMANTIC2.json ...] [--top 16] [--exclude ID,ID]
+    vox.py search QUERY --since 2025-10-14 [--until ...] [--kind all|post|comment]
+    vox.py whale USER_ID [--since 2025-10-14]
+    vox.py authors [--top 50]                       # active authors in messages_filtered.json
+    vox.py add_keywords WORD [WORD ...] --source "..."
+    vox.py add_whale USER_ID --alias NAME --reason "..."
+    vox.py registry                                 # print registry.json
 """
 
+import fcntl
+import hashlib
 import json
-import math
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -31,6 +36,10 @@ import fire
 
 PAGE = 2000
 SEARCH_TIMEOUT = 600
+WHALE_LIMIT = 100000
+REGISTRY = Path("registry.json")
+RAW = Path("messages_raw.json")
+FILTERED = Path("messages_filtered.json")
 
 
 class VoxError(Exception):
@@ -106,18 +115,70 @@ def _save(path, data):
     return str(path.resolve())
 
 
-def _load(path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+def _load(path, default=None):
+    path = Path(path)
+    if not path.exists() and default is not None:
+        return default
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _message(row):
-    keep = ("id", "group_id", "group_name", "group_alias", "group_url", "message_url", "date", "user_id", "user_alias", "text")
-    return {k: row.get(k) for k in keep if row.get(k) is not None}
+@contextmanager
+def _locked(path):
+    """Serialize read-modify-write of a shared file between parallel agents."""
+    with open(str(path) + ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
-def _traverse(state, out, query, include=None):
+def _message(row, user_id=None):
+    message_id = row.get("id")
+    if message_id is None and row.get("message_url"):
+        tail = re.search(r"/(\d+)/?$", row["message_url"])
+        message_id = int(tail.group(1)) if tail else None
+    keep = ("group_id", "group_name", "group_alias", "group_url", "message_url", "date", "user_id", "user_alias", "text")
+    message = {k: row.get(k) for k in keep if row.get(k) not in (None, "")}
+    message["id"] = message_id
+    if user_id is not None:
+        message["user_id"] = user_id
+    return message
+
+
+def _key(message):
+    if message.get("id") is not None:
+        return f"{message.get('group_id')}:{message['id']}"
+    digest = hashlib.sha256((message.get("text") or "").encode()).hexdigest()[:16]
+    return f"{message.get('group_id')}:{message.get('date')}:{digest}"
+
+
+def _pool(messages, source):
+    """Merge messages into messages_raw.json, deduplicated, recording where each came from."""
+    with _locked(RAW):
+        pool = _load(RAW, {"messages": []})
+        index = {_key(m): m for m in pool["messages"]}
+        added = 0
+        for message in messages:
+            current = index.get(_key(message))
+            if current is None:
+                current = index[_key(message)] = {**message, "sources": []}
+                pool["messages"].append(current)
+                added += 1
+            if source not in current["sources"]:
+                current["sources"].append(source)
+        _save(RAW, pool)
+    print(f"{source}: {added} new, {len(pool['messages'])} in messages_raw.json", file=sys.stderr)
+
+
+def _registry(update):
+    with _locked(REGISTRY):
+        registry = _load(REGISTRY, {"keywords": [], "whales": []})
+        update(registry)
+        _save(REGISTRY, registry)
+    return registry
+
+
+def _traverse(state, out, query):
     """Page from the cursor back to `since`, newest first, checkpointing each page."""
-    seen = {(m.get("group_id"), m["id"]) for m in state["messages"]}
+    seen = {_key(m) for m in state["messages"]}
     since = _date(state["since"])
     while state["cursor"] is not None:
         page = _call(
@@ -129,16 +190,15 @@ def _traverse(state, out, query, include=None):
                 "message_type": state["kind"],
                 "from_date": _iso(since),
                 "to_date": state["cursor"],
-                "include_groups_ids": include,
                 "timeout": SEARCH_TIMEOUT,
                 "stream": True,
             },
         )
         for row in page["messages"]:
-            key = (row.get("group_id"), row.get("id"))
-            if row.get("is_private") is not True and key not in seen:
-                seen.add(key)
-                state["messages"].append(_message(row))
+            message = _message(row)
+            if row.get("is_private") is not True and _key(message) not in seen:
+                seen.add(_key(message))
+                state["messages"].append(message)
         state["pages"] += 1
         if len(page["messages"]) < PAGE:
             state["cursor"] = None
@@ -154,91 +214,95 @@ def _traverse(state, out, query, include=None):
 
 
 class Vox:
-    """Vox research CLI. Output is JSON on disk; the printed value is its path."""
+    """Vox research CLI. Run it from the research folder."""
 
-    def search(self, query, since, until=None, kind="all", group=None, out=None):
+    def search(self, query, since, until=None, kind="all"):
         """All messages matching QUERY (words are ANDed) from SINCE to UNTIL (default now),
-        optionally only inside GROUP. Resumes OUT."""
+        paged by date. Adds them to messages_raw.json and marks the keyword searched."""
         query = str(query)
         if not 3 <= len(query) < 50:
             raise VoxError("Vox needs a query of 3..49 characters.")
-        group = int(group) if group is not None else None
-        default = f"vox/groups/{group}/search/{_slug(query)}.json" if group else f"vox/search/{_slug(query)}.json"
-        out = Path(out or default)
+        until = _iso(until or datetime.now(timezone.utc))
+        out = Path(f"vox/search/{_slug(query)}_{_iso(since)[:10]}_{until[:10]}.json")
         if out.exists():
             state = _load(out)
-            if (state["query"], state["since"], state["kind"], state.get("group")) != (query, _iso(since), kind, group):
-                raise VoxError(f"{out} holds a different search; pass another --out.")
         else:
-            until = _iso(until or datetime.now(timezone.utc))
-            state = {"query": query, "group": group, "since": _iso(since), "until": until, "kind": kind, "cursor": until, "pages": 0, "messages": []}
-        _traverse(state, out, query, include=str(group) if group else None)
+            state = {"query": query, "since": _iso(since), "until": until, "kind": kind, "cursor": until, "pages": 0, "messages": []}
+        _traverse(state, out, query)
         state["complete"] = True
-        state["groups"] = dict(Counter(str(m["group_id"]) for m in state["messages"] if m.get("group_id")).most_common())
-        return _save(out, state)
+        _save(out, state)
+        _pool(state["messages"], f"keyword:{query}")
 
-    def semantic(self, query, limit=50, out=None):
-        """Groups found by Vox semantic search for QUERY (a topic description, not keywords)."""
-        groups = []
-        for row in _call("/search/ai/raw/GROUP", {"query": query, "limit": int(limit)}):
-            report = row.get("report")
-            if isinstance(report, str):
-                try:
-                    report = json.loads(report)
-                except ValueError:
-                    pass
-            groups.append({"group_id": row.get("id"), "type": row.get("type"), "message_count": row.get("message_count"), "report": report})
-        return _save(out or f"vox/semantic/{_slug(query)}.json", {"query": query, "groups": groups})
+        def mark(registry):
+            for item in registry["keywords"]:
+                if item["word"] == query:
+                    item["status"] = "searched"
 
-    def group(self, group_id, out=None):
-        """Group card: name, alias, type, members, privacy."""
-        card = _call(f"/groups/{int(group_id)}")
-        card = {k: card.get(k) for k in ("id", "alias", "name", "title", "type", "members_count", "about", "is_private", "related_group")}
-        if card.get("alias") and not card.get("is_private"):
-            card["url"] = f"https://t.me/{card['alias']}"
-        return _save(out or f"vox/groups/{int(group_id)}/card.json", card)
+        _registry(mark)
+        return str(RAW.resolve())
 
-    def authors(self, group_id, *searches, top=30):
-        """Most active authors of GROUP_ID across search outputs, with sample message URLs."""
-        gid = int(group_id)
-        messages = {}
-        for path in searches:
-            for m in _load(path)["messages"]:
-                if m.get("group_id") == gid:
-                    messages[m["id"]] = m
-        counts = Counter(m["user_id"] for m in messages.values() if m.get("user_id"))
-        aliases, samples = {}, defaultdict(list)
-        for m in messages.values():
-            if m.get("user_id"):
-                if not aliases.get(m["user_id"]):
-                    aliases[m["user_id"]] = m.get("user_alias")
-                if len(samples[m["user_id"]]) < 5 and m.get("message_url"):
-                    samples[m["user_id"]].append(m["message_url"])
-        rows = [{"user_id": uid, "user_alias": aliases[uid], "messages": n, "sample_urls": samples[uid]} for uid, n in counts.most_common(int(top))]
-        return _save(f"vox/groups/{gid}/authors.json", {"group_id": gid, "total_messages": len(messages), "authors": rows})
+    def whale(self, user_id, since=None):
+        """A whale's messages in public chats (Vox user_tracker messages panel only).
+        Adds them to messages_raw.json and marks the whale fetched."""
+        uid = int(user_id)
+        data = _call(f"/user_tracker/{uid}/panels/messages", {"limit": WHALE_LIMIT})
+        _save(f"vox/whales/{uid}.json", data)
+        low = _date(since) if since else None
+        messages = [_message(row, user_id=uid) for row in data.get("rows") or [] if row.get("is_private") is not True and (low is None or _date(row["date"]) >= low)]
+        _pool(messages, f"whale:{uid}")
 
-    def rank(self, relevant, *semantic, top=16, exclude="", out="vox/ranking.json"):
-        """Top groups by relevant unique messages + group size, each normalised, +1 if found by both searches."""
-        skip = {int(x) for x in str(exclude).replace("(", "").replace(")", "").split(",") if x.strip()}
-        texts, names, sizes = defaultdict(set), {}, {}
-        for m in _load(relevant)["messages"]:
-            if m.get("group_id"):
-                texts[m["group_id"]].add(m.get("text"))
-                names.setdefault(m["group_id"], {"group_name": m.get("group_name"), "group_alias": m.get("group_alias")})
-        for path in semantic:
-            for g in _load(path)["groups"]:
-                if g.get("group_id"):
-                    sizes[g["group_id"]] = max(sizes.get(g["group_id"], 0), g.get("message_count") or 0)
-        candidates = (set(texts) | set(sizes)) - skip
-        max_unique = max((len(texts[g]) for g in candidates if g in texts), default=0) or 1
-        max_size = max((math.log1p(sizes.get(g, 0)) for g in candidates), default=0) or 1
-        rows = []
-        for g in candidates:
-            unique, both = len(texts.get(g, ())), g in texts and g in sizes
-            score = unique / max_unique + math.log1p(sizes.get(g, 0)) / max_size + (1 if both else 0)
-            rows.append({"group_id": g, **names.get(g, {}), "score": round(score, 4), "unique_relevant_messages": unique, "message_count": sizes.get(g), "in_text_search": g in texts, "in_semantic": g in sizes})
-        rows.sort(key=lambda r: -r["score"])
-        return _save(out, {"top": int(top), "groups": rows[: int(top)], "rest": rows[int(top) :]})
+        def mark(registry):
+            for item in registry["whales"]:
+                if item["user_id"] == uid:
+                    item["status"] = "fetched"
+
+        _registry(mark)
+        return str(RAW.resolve())
+
+    def authors(self, top=50):
+        """Most active authors in messages_filtered.json: message and group counts, sample URLs."""
+        messages = _load(FILTERED)["messages"]
+        counts = Counter(m["user_id"] for m in messages if m.get("user_id"))
+        aliases, groups, samples = {}, defaultdict(set), defaultdict(list)
+        for m in messages:
+            uid = m.get("user_id")
+            if not uid:
+                continue
+            if not aliases.get(uid):
+                aliases[uid] = m.get("user_alias")
+            groups[uid].add(m.get("group_id"))
+            if len(samples[uid]) < 5 and m.get("message_url"):
+                samples[uid].append(m["message_url"])
+        rows = [{"user_id": uid, "user_alias": aliases[uid], "messages": n, "groups": len(groups[uid]), "sample_urls": samples[uid]} for uid, n in counts.most_common(int(top))]
+        return _save("vox/authors.json", {"total_messages": len(messages), "authors": rows})
+
+    def add_keywords(self, *words, source=""):
+        """Add new keywords to registry.json (status todo); known ones are skipped."""
+
+        def add(registry):
+            known = {item["word"].casefold() for item in registry["keywords"]}
+            for word in words:
+                if str(word).casefold() not in known:
+                    known.add(str(word).casefold())
+                    registry["keywords"].append({"word": str(word), "source": source, "status": "todo"})
+
+        registry = _registry(add)
+        return f"{sum(k['status'] == 'todo' for k in registry['keywords'])} keywords to search"
+
+    def add_whale(self, user_id, alias="", reason=""):
+        """Add a whale to registry.json (status todo)."""
+        uid = int(user_id)
+
+        def add(registry):
+            if all(item["user_id"] != uid for item in registry["whales"]):
+                registry["whales"].append({"user_id": uid, "user_alias": alias, "reason": reason, "status": "todo"})
+
+        registry = _registry(add)
+        return f"{len(registry['whales'])} whales"
+
+    def registry(self):
+        """Print registry.json."""
+        return json.dumps(_load(REGISTRY, {"keywords": [], "whales": []}), ensure_ascii=False, indent=1)
 
 
 def main():

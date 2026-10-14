@@ -331,17 +331,22 @@ def _run(mode, input, output):
     return str(target)
 
 
-def _messages(paths):
-    """Messages from vox.py search/download outputs, deduplicated, with the queries that found them."""
-    rows = {}
-    for path in paths:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        for m in data["messages"]:
-            key = f"{m.get('group_id')}:{m['id']}"
-            row = rows.setdefault(key, {**m, "keywords": []})
-            if data.get("query") and data["query"] not in row["keywords"]:
-                row["keywords"].append(data["query"])
-    return rows
+RAW = Path("messages_raw.json")
+FILTERED = Path("messages_filtered.json")
+REJECTED = Path("jev/rejected.json")
+SCORES = Path("jev/scores.json")
+FIELDS = ("group_id", "group_name", "group_alias", "message_url", "date", "user_id", "user_alias", "text", "sources")
+
+
+def _normal(text):
+    return " ".join((text or "").casefold().split())
+
+
+def _write(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 class Jev:
@@ -359,33 +364,33 @@ class Jev:
     def cancel(self, input, output):
         return _run("cancel", input, output)
 
-    def filter(self, instruction, *messages, threshold=0.5, out="jev/relevant.json", poll=10):
-        """Score every message of vox.py outputs against INSTRUCTION; save those >= THRESHOLD.
+    def filter(self, instruction, threshold=0.5, poll=10):
+        """Deduplicate messages_raw.json and keep messages on topic per INSTRUCTION.
 
-        Writes OUT (relevant messages, fixed format) and OUT with .rejected.json (the rest,
-        with scores, for review). Resumes the same Jev batch while OUT.batch.json exists.
+        Repeated texts are scored once (`duplicates` counts the copies). Scores are
+        cached per instruction, so a new round only scores new messages; a new
+        instruction rescores everything. Writes messages_filtered.json (fixed
+        format) and jev/rejected.json.
         """
-        out = Path(out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        rows = _messages(messages)
-        if not rows:
-            raise ClientError("no_messages")
-        keys = list(rows)
+        raw = json.loads(RAW.read_text(encoding="utf-8"))["messages"]
+        unique = {}
+        for m in raw:
+            text = _normal(m.get("text"))
+            if not text:
+                continue
+            first = unique.setdefault(text, {**m, "duplicates": 0})
+            if first is not m and first.get("id") != m.get("id"):
+                first["duplicates"] += 1
+                first["sources"] = sorted(set(first.get("sources", [])) | set(m.get("sources", [])))
+        cache = json.loads(SCORES.read_text()) if SCORES.exists() else {}
+        digest = hashlib.sha256(instruction.encode()).hexdigest()
+        scores = cache.setdefault(digest, {"instruction": instruction, "scores": {}})["scores"]
+        todo = [t for t in unique if hashlib.sha256(t.encode()).hexdigest() not in scores]
         questions = {"relevant": {"type": "noul", "instructions": instruction}}
-        state_path = out.with_name(out.name + ".batch.json")
-        state = json.loads(state_path.read_text()) if state_path.exists() else None
-        if state and (state["instruction"] != instruction or state["keys"] != keys):
-            raise ClientError("batch_state_mismatch: remove the .batch.json or pass another --out")
-        if not state:
-            handles = []
-            for start in range(0, len(keys), MAX_ITEMS):
-                chunk = keys[start : start + MAX_ITEMS]
-                items = [{"id": key, "state": rows[key].get("text") or ""} for key in chunk]
-                handles.append(submit({"items": items, "questions": questions}))
-            state = {"instruction": instruction, "keys": keys, "handles": handles}
-            state_path.write_text(json.dumps(state, ensure_ascii=False))
-        scores = {}
-        for handle in state["handles"]:
+        for start in range(0, len(todo), MAX_ITEMS):
+            chunk = todo[start : start + MAX_ITEMS]
+            ids = {hashlib.sha256(t.encode()).hexdigest(): t for t in chunk}
+            handle = submit({"items": [{"id": k, "state": unique[t].get("text") or ""} for k, t in ids.items()], "questions": questions})
             while True:
                 result = collect(handle)
                 if result["complete"]:
@@ -394,30 +399,29 @@ class Jev:
                 time.sleep(poll)
             for row in result["results"]:
                 answer = ((row.get("response") or {}).get("answers") or {}).get("relevant") or {}
-                scores[row["custom_id"]] = answer.get("noul")
+                if answer.get("noul") is not None:
+                    scores[row["custom_id"]] = answer["noul"]
+            _write(SCORES, cache)
         relevant, rejected = [], []
-        for key in keys:
-            m = rows[key]
-            record = {
-                "group_id": m.get("group_id"),
-                "group_name": m.get("group_name"),
-                "group_alias": m.get("group_alias"),
-                "message_id": m["id"],
-                "message_url": m.get("message_url"),
-                "date": m.get("date"),
-                "user_id": m.get("user_id"),
-                "user_alias": m.get("user_alias"),
-                "text": m.get("text"),
-                "keywords": m["keywords"],
-                "jev_score": scores.get(key),
-            }
-            (relevant if record["jev_score"] is not None and record["jev_score"] >= threshold else rejected).append(record)
-        meta = {"instruction": instruction, "threshold": threshold, "sources": [str(Path(p).resolve()) for p in messages], "errors": sum(scores.get(k) is None for k in keys)}
-        out.write_text(json.dumps({**meta, "messages": relevant}, ensure_ascii=False, indent=1))
-        out.with_name(out.stem + ".rejected.json").write_text(json.dumps({**meta, "messages": rejected}, ensure_ascii=False, indent=1))
-        state_path.unlink()
-        print(f"{len(relevant)} relevant, {len(rejected)} rejected, {meta['errors']} errors", file=sys.stderr)
-        return str(out.resolve())
+        for text, m in unique.items():
+            score = scores.get(hashlib.sha256(text.encode()).hexdigest())
+            record = {"key": f"{m.get('group_id')}:{m.get('id')}", "message_id": m.get("id"), **{k: m.get(k) for k in FIELDS}, "duplicates": m["duplicates"], "jev_score": score}
+            (relevant if score is not None and score >= threshold else rejected).append(record)
+        meta = {"instruction": instruction, "threshold": threshold, "raw_messages": len(raw), "unique_texts": len(unique), "unscored": sum(r["jev_score"] is None for r in rejected)}
+        _write(FILTERED, {**meta, "messages": relevant})
+        _write(REJECTED, {**meta, "messages": rejected})
+        print(f"{len(raw)} raw, {len(unique)} unique, {len(relevant)} relevant, {len(rejected)} rejected ({meta['unscored']} unscored)", file=sys.stderr)
+        return str(FILTERED.resolve())
+
+    def sample(self, n=100, width=300):
+        """Print up to N messages for one-pass review: accepted with the lowest scores
+        and rejected with the highest, i.e. those nearest the threshold."""
+        accepted = sorted(json.loads(FILTERED.read_text())["messages"], key=lambda m: m["jev_score"])
+        rejected = sorted((m for m in json.loads(REJECTED.read_text())["messages"] if m["jev_score"] is not None), key=lambda m: -m["jev_score"])
+        half = int(n) // 2
+        rows = [("+", m) for m in accepted[:half]] + [("-", m) for m in rejected[: int(n) - min(half, len(accepted))]]
+        lines = [f"{sign} {m['jev_score']:.2f} {m.get('group_alias') or m.get('group_id')}: {' '.join((m.get('text') or '').split())[: int(width)]}" for sign, m in rows]
+        return "\n".join(lines)
 
 
 def main():

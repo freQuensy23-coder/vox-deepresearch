@@ -1,7 +1,9 @@
 """Offline contracts for the telegram-research scripts (vox.py, jev.py)."""
 
 import importlib.util
+import io
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -21,10 +23,20 @@ jev = load("jev")
 
 
 def row(mid, date, group=-1001, text=None, user=7):
-    return {"id": mid, "group_id": group, "date": date, "text": text or f"text {mid}", "user_id": user, "user_alias": "u7", "message_url": f"https://t.me/g/{mid}"}
+    return {"id": mid, "group_id": group, "date": date, "text": text or f"text {mid}", "user_id": user, "user_alias": f"u{user}", "message_url": f"https://t.me/g/{mid}"}
 
 
-def test_search_pages_back_to_since_and_deduplicates_boundary(tmp_path, monkeypatch):
+@pytest.fixture(autouse=True)
+def research_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def raw():
+    return json.loads(Path("messages_raw.json").read_text())["messages"]
+
+
+def test_search_pages_back_by_date_pools_and_marks_keyword(monkeypatch):
     monkeypatch.setattr(vox, "PAGE", 3)
     pages = [
         {"stop_reason": "finished", "messages": [row(9, "2026-01-30T00:00:00Z"), row(8, "2026-01-20T00:00:00Z"), row(7, "2026-01-10T00:00:00Z")]},
@@ -32,16 +44,16 @@ def test_search_pages_back_to_since_and_deduplicates_boundary(tmp_path, monkeypa
     ]
     calls = []
     monkeypatch.setattr(vox, "_call", lambda path, params: calls.append(params) or pages[len(calls) - 1])
-    out = tmp_path / "s.json"
-    vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01", out=str(out))
-    data = json.loads(out.read_text())
-    assert [m["id"] for m in data["messages"]] == [9, 8, 7, 6]
-    assert data["complete"] and data["pages"] == 2 and data["groups"] == {"-1001": 4}
+    vox.Vox().add_keywords("вахта", source="seed")
+    vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
     assert [c["to_date"] for c in calls] == ["2026-02-01T00:00:00Z", "2026-01-10T00:00:00Z"]
-    assert all(c["from_date"] == "2026-01-01T00:00:00Z" and c["order"] == "desc" for c in calls)
+    assert all(c["from_date"] == "2026-01-01T00:00:00Z" and c["limit"] == 3 for c in calls)
+    assert [m["id"] for m in raw()] == [9, 8, 7, 6]
+    assert raw()[0]["sources"] == ["keyword:вахта"]
+    assert json.loads(Path("registry.json").read_text())["keywords"][0]["status"] == "searched"
 
 
-def test_search_resumes_from_checkpoint_after_failure(tmp_path, monkeypatch):
+def test_search_resumes_from_checkpoint_after_failure(monkeypatch):
     monkeypatch.setattr(vox, "PAGE", 2)
     responses = [{"stop_reason": "finished", "messages": [row(5, "2026-01-20T00:00:00Z"), row(4, "2026-01-15T00:00:00Z")]}, vox.VoxError("boom")]
 
@@ -52,21 +64,47 @@ def test_search_resumes_from_checkpoint_after_failure(tmp_path, monkeypatch):
         return item
 
     monkeypatch.setattr(vox, "_call", flaky)
-    out = tmp_path / "s.json"
     with pytest.raises(vox.VoxError):
-        vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01", out=str(out))
-    assert json.loads(out.read_text())["cursor"] == "2026-01-15T00:00:00Z"
+        vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
     seen = []
     monkeypatch.setattr(vox, "_call", lambda path, params: seen.append(params["to_date"]) or {"stop_reason": "finished", "messages": [row(3, "2026-01-02T00:00:00Z")]})
-    vox.Vox().search("вахта", since="2026-01-01", out=str(out))
+    vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
     assert seen == ["2026-01-15T00:00:00Z"]
-    assert [m["id"] for m in json.loads(out.read_text())["messages"]] == [5, 4, 3]
+    assert [m["id"] for m in raw()] == [5, 4, 3]
+
+
+def test_whale_messages_join_the_pool_deduplicated(monkeypatch):
+    monkeypatch.setattr(vox, "_call", lambda path, params: {"stop_reason": "finished", "messages": [row(4, "2026-01-07T00:00:00Z", user=42)]})
+    vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
+    calls = []
+    panel = {"rows": [
+        {"date": "2026-01-07T00:00:00Z", "group_id": -1001, "message_url": "https://t.me/g/4", "text": "text 4"},
+        {"date": "2026-01-08T00:00:00Z", "group_id": -2002, "message_url": "https://t.me/h/9", "text": "elsewhere"},
+        {"date": "2025-06-01T00:00:00Z", "group_id": -2002, "message_url": "https://t.me/h/1", "text": "too old"},
+    ]}
+    monkeypatch.setattr(vox, "_call", lambda path, params: calls.append((path, params)) or panel)
+    vox.Vox().add_whale(42, alias="boss", reason="leader")
+    vox.Vox().whale(42, since="2026-01-01")
+    assert calls == [("/user_tracker/42/panels/messages", {"limit": 100000})]
+    pool = {(m["group_id"], m["id"]): m for m in raw()}
+    assert set(pool) == {(-1001, 4), (-2002, 9)}
+    assert pool[(-1001, 4)]["sources"] == ["keyword:вахта", "whale:42"]
+    assert pool[(-2002, 9)]["user_id"] == 42
+    assert json.loads(Path("registry.json").read_text())["whales"][0]["status"] == "fetched"
+
+
+def test_registry_skips_known_keywords():
+    vox.Vox().add_keywords("вахта", "Вахта", "межвахта", source="seed")
+    assert [k["word"] for k in json.loads(Path("registry.json").read_text())["keywords"]] == ["вахта", "межвахта"]
+
+
+def test_authors_counts_filtered_messages():
+    Path("messages_filtered.json").write_text(json.dumps({"messages": [row(1, "d", user=1), row(2, "d", group=-2, user=1), row(3, "d", user=2)]}))
+    data = json.loads(Path(vox.Vox().authors(top=5)).read_text())
+    assert [(a["user_id"], a["messages"], a["groups"]) for a in data["authors"]] == [(1, 2, 2), (2, 1, 1)]
 
 
 def test_proxy_timeout_surfaces_its_advice(monkeypatch):
-    import io
-    import urllib.error
-
     body = json.dumps({"error": "request_timeout", "message": "Request exceeded 50 seconds. Reduce the date interval and try again."}).encode()
 
     class Opener:
@@ -79,58 +117,27 @@ def test_proxy_timeout_surfaces_its_advice(monkeypatch):
         vox._call("/search/text", {"query": "вахта"})
 
 
-def test_search_inside_group_and_authors(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    calls = []
-    rows = [row(3, "2026-01-07T00:00:00Z", user=1), row(2, "2026-01-05T00:00:00Z", user=1), row(1, "2026-01-02T00:00:00Z", user=2)]
-    monkeypatch.setattr(vox, "_call", lambda path, params: calls.append(params) or {"stop_reason": "finished", "messages": rows})
-    path = vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01", group=-1001)
-    assert path.endswith("vox/groups/-1001/search/вахта.json")
-    assert calls[0]["include_groups_ids"] == "-1001"
-    other = tmp_path / "other.json"
-    other.write_text(json.dumps({"messages": [row(4, "2026-01-08T00:00:00Z", group=-2002, user=1), row(3, "2026-01-07T00:00:00Z", user=1)]}))
-    data = json.loads(Path(vox.Vox().authors(-1001, path, str(other), top=5)).read_text())
-    assert data["total_messages"] == 3
-    assert [(a["user_id"], a["messages"]) for a in data["authors"]] == [(1, 2), (2, 1)]
-
-
-def test_rank_scores_unique_relevant_size_and_both_sources(tmp_path):
-    relevant = tmp_path / "relevant.json"
-    relevant.write_text(json.dumps({"messages": [
-        {"group_id": -1, "text": "a"}, {"group_id": -1, "text": "a"}, {"group_id": -1, "text": "b"},
-        {"group_id": -2, "text": "c"},
-    ]}))
-    semantic = tmp_path / "semantic.json"
-    semantic.write_text(json.dumps({"groups": [{"group_id": -2, "message_count": 100}, {"group_id": -3, "message_count": 50}]}))
-    out = tmp_path / "rank.json"
-    vox.Vox().rank(str(relevant), str(semantic), top=2, exclude="-9", out=str(out))
-    data = json.loads(out.read_text())
-    assert [g["group_id"] for g in data["groups"]] == [-2, -1]
-    assert data["groups"][1]["unique_relevant_messages"] == 2
-    assert data["groups"][0]["in_text_search"] and data["groups"][0]["in_semantic"]
-    assert [g["group_id"] for g in data["rest"]] == [-3]
-
-
 def test_relay_is_required(monkeypatch):
     monkeypatch.delenv("VOX_RELAY_URL", raising=False)
     with pytest.raises(vox.VoxError, match="VOX_RELAY_URL"):
-        vox._call("/groups/-1")
+        vox._call("/search/text", {"query": "вахта"})
 
 
-def test_jev_filter_splits_by_threshold_in_fixed_format(tmp_path, monkeypatch):
-    source = tmp_path / "search.json"
-    source.write_text(json.dumps({"query": "вахта", "messages": [row(1, "2026-01-02T00:00:00Z", text="опыт"), row(2, "2026-01-03T00:00:00Z", text="реклама")]}))
+def test_jev_filter_dedups_texts_caches_scores_and_samples(monkeypatch):
+    Path("messages_raw.json").write_text(json.dumps({"messages": [
+        {**row(1, "d", text="Опыт  вахты"), "sources": ["keyword:вахта"]},
+        {**row(2, "d", group=-2, text="опыт вахты"), "sources": ["whale:7"]},
+        {**row(3, "d", text="реклама"), "sources": ["keyword:вахта"]},
+    ]}))
     submitted = []
-    monkeypatch.setattr(jev, "submit", lambda data: submitted.append(data) or {"id": "batch_x", "ids": [i["id"] for i in data["items"]]})
-    scores = {"-1001:1": 0.9, "-1001:2": 0.1}
-    monkeypatch.setattr(jev, "collect", lambda handle: {"complete": True, "results": [{"custom_id": k, "response": {"answers": {"relevant": {"noul": scores[k]}}}} for k in handle["ids"]]})
-    out = tmp_path / "jev" / "relevant.json"
-    jev.Jev().filter("Личный опыт?", str(source), out=str(out))
-    relevant = json.loads(out.read_text())
-    rejected = json.loads(out.with_name("relevant.rejected.json").read_text())
-    assert [m["message_id"] for m in relevant["messages"]] == [1]
-    assert [m["message_id"] for m in rejected["messages"]] == [2]
-    assert set(relevant["messages"][0]) == {"group_id", "group_name", "group_alias", "message_id", "message_url", "date", "user_id", "user_alias", "text", "keywords", "jev_score"}
-    assert relevant["messages"][0]["keywords"] == ["вахта"]
-    assert submitted[0]["questions"]["relevant"]["instructions"] == "Личный опыт?"
-    assert not out.with_name("relevant.json.batch.json").exists()
+    monkeypatch.setattr(jev, "submit", lambda data: submitted.append(data) or {"id": "batch_x", "texts": {i["id"]: i["state"] for i in data["items"]}})
+    monkeypatch.setattr(jev, "collect", lambda handle: {"complete": True, "results": [{"custom_id": k, "response": {"answers": {"relevant": {"noul": 0.9 if "пыт" in t else 0.1}}}} for k, t in handle["texts"].items()]})
+    jev.Jev().filter("Личный опыт?")
+    filtered = json.loads(Path("messages_filtered.json").read_text())
+    assert [(m["message_id"], m["duplicates"], m["sources"]) for m in filtered["messages"]] == [(1, 1, ["keyword:вахта", "whale:7"])]
+    assert {"key", "group_id", "message_url", "date", "user_id", "text", "jev_score"} <= set(filtered["messages"][0])
+    assert len(submitted[0]["items"]) == 2
+    jev.Jev().filter("Личный опыт?")
+    assert len(submitted) == 1  # scores are cached per instruction
+    lines = jev.Jev().sample(n=10).splitlines()
+    assert lines[0].startswith("+ 0.90") and lines[1].startswith("- 0.10")
