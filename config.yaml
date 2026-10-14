@@ -1943,32 +1943,11 @@ subagent_runtime:
   queue_timeout_seconds: 0       # no queue deadline; cancellation still works
 
 # Vox research profile; agents retain control of relevance and research decisions.
-lead_prompt_overlay:
-  append: >-
-    For telegram-research, follow the active skill. The lead searches broadly and
-    assigns EVERY discovered relevant group to depth research, one group per agent
-    except documented linked clusters. Use scripts, automation and Jev as useful;
-    batch_task(items_file=...) can submit all unassigned relevant groups with
-    max_running_items=32 and max_live_items=1000. Do not limit coverage to a sample
-    or stop at a report while relevant groups or discoveries remain unresolved.
-    The goal is the complete map requested by the user. Individual network errors
-    do not authorize a blanket ban on further requests for depth agents.
 subagents:
   timeout_seconds: 0
   max_total_per_run: 1000
   token_budget:
     enabled: false
-  agents:
-    general-purpose:
-      prompt_overlay:
-        append: >-
-          For telegram-research, investigate your assigned group using the active
-          skill and original user question. You may export the group and use
-          scripts, automation and Jev to obtain and analyze the needed evidence.
-          Save sourced facts, new keywords, external links and public business
-          contacts, and add every discovered relevant group to the shared registry.
-          Existing samples do not restrict further collection. Keep unfinished
-          research partial rather than claiming it is complete.
 
 # subagents:
 #   # Default timeout (seconds) for built-in subagents (default: 1800 = 30 min).

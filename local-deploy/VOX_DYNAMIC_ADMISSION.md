@@ -127,9 +127,9 @@ Both runners save source snapshots, including the JSON probe, and hashes
 alongside their results. The [historical synthetic report](evals/dynamic-admission-local-2026-10-12.md)
 records the earlier V8 implementation's schedule, measurements and failures;
 those timings are not measurements of the current code. The current combined
-suite passes 287 cases, including the real `vox.py search-page` CLI through a
-local relay and fixture upstream: streamed and ordinary JSON, date filters,
-full text, saved raw responses, cancellable admission, and large final frames.
+suite passes 287 cases, including the real `vox.py search` CLI through a
+local relay and fixture upstream: streamed results, date filters, full text,
+cancellable admission, and large final frames.
 
 This is a controlled synthetic comparison. It cannot establish Vox's actual
 capacity, prove a hard upstream quota, or demonstrate an improvement on real

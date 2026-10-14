@@ -35,7 +35,7 @@ def test_native_tool_cli_relay_receipt(tmp_path, monkeypatch, relays, upstream):
     runtime = SimpleNamespace(context={"run_id": "synthetic-run", "thread_id": "synthetic-thread", "task_id": "synthetic-child"})
 
     def actual(value: str):
-        command = shlex.quote(sys.executable) + " " + shlex.quote(str(SCRIPTS / "vox.py")) + " search-page synthetic --limit 1"
+        command = shlex.quote(sys.executable) + " " + shlex.quote(str(SCRIPTS / "vox.py")) + " search synthetic --since 2026-01-01 --out " + shlex.quote(str(tmp_path / "s.json"))
         return _execute_bash_command(sandbox, command, runtime=runtime, env=None)
 
     tool = StructuredTool.from_function(actual, name="synthetic_vox", description="Synthetic local relay", return_direct=True)

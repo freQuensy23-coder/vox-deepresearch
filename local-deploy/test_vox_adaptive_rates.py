@@ -151,7 +151,7 @@ def test_real_cli_concurrent_no_duplicate_gate_no_retries(relays, upstream, tmp_
     processes = []
     try:
         for index in range(5):
-            processes.append(subprocess.Popen([sys.executable, str(script), 'search-page', 'hold', '--output', str(tmp_path/f'{index}.json')], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+            processes.append(subprocess.Popen([sys.executable, str(script), 'search', 'hold', '--since', '2026-01-01', '--out', str(tmp_path/f'{index}.json')], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
         await_starts(upstream, 5)
         assert upstream.maximum == 5
         assert upstream.starts[4] - upstream.starts[0] < 2

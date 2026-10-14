@@ -1,4 +1,3 @@
-import argparse
 import hashlib
 import http.client
 import json
@@ -6,9 +5,12 @@ import math
 import os
 import re
 import sys
+import time
 import urllib.parse
 from collections import Counter
 from pathlib import Path
+
+import fire
 
 
 MAX_BYTES = 16 * 1024 * 1024
@@ -306,51 +308,125 @@ def save(path, data):
         os.fsync(stream.fileno())
 
 
+def _run(mode, input, output):
+    """Run one raw mode on an INPUT JSON file; never overwrites OUTPUT."""
+    target = Path(output).resolve()
+    raw = Path(input).read_bytes()
+    if len(raw) > MAX_BYTES:
+        raise ClientError("input_too_large")
+    data = json.loads(raw)
+    if target.exists():
+        raise ClientError("output_exists")
+    receipt = {"input": str(Path(input).resolve()), "input_sha256": hashlib.sha256(raw).hexdigest(), "mode": mode}
+    save(str(target) + ".request.json", receipt)
+    if mode == "evaluate":
+        result = evaluate(data)
+    elif mode == "submit":
+        result = submit(data, persist=lambda handle: save(str(target) + ".handle.json", {**handle, **receipt}))
+    elif mode == "collect":
+        result = collect(data)
+    else:
+        result = cancel(data)
+    save(target, {**result, **receipt})
+    return str(target)
+
+
+def _messages(paths):
+    """Messages from vox.py search/download outputs, deduplicated, with the queries that found them."""
+    rows = {}
+    for path in paths:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        for m in data["messages"]:
+            key = f"{m.get('group_id')}:{m['id']}"
+            row = rows.setdefault(key, {**m, "keywords": []})
+            if data.get("query") and data["query"] not in row["keywords"]:
+                row["keywords"].append(data["query"])
+    return rows
+
+
+class Jev:
+    """Typed Jev evaluations through the local Jev bridge (JEV_URL). Outputs are heuristics, not evidence."""
+
+    def evaluate(self, input, output):
+        return _run("evaluate", input, output)
+
+    def submit(self, input, output):
+        return _run("submit", input, output)
+
+    def collect(self, input, output):
+        return _run("collect", input, output)
+
+    def cancel(self, input, output):
+        return _run("cancel", input, output)
+
+    def filter(self, instruction, *messages, threshold=0.5, out="jev/relevant.json", poll=10):
+        """Score every message of vox.py outputs against INSTRUCTION; save those >= THRESHOLD.
+
+        Writes OUT (relevant messages, fixed format) and OUT with .rejected.json (the rest,
+        with scores, for review). Resumes the same Jev batch while OUT.batch.json exists.
+        """
+        out = Path(out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        rows = _messages(messages)
+        if not rows:
+            raise ClientError("no_messages")
+        keys = list(rows)
+        questions = {"relevant": {"type": "noul", "instructions": instruction}}
+        state_path = out.with_name(out.name + ".batch.json")
+        state = json.loads(state_path.read_text()) if state_path.exists() else None
+        if state and (state["instruction"] != instruction or state["keys"] != keys):
+            raise ClientError("batch_state_mismatch: remove the .batch.json or pass another --out")
+        if not state:
+            handles = []
+            for start in range(0, len(keys), MAX_ITEMS):
+                chunk = keys[start : start + MAX_ITEMS]
+                items = [{"id": key, "state": rows[key].get("text") or ""} for key in chunk]
+                handles.append(submit({"items": items, "questions": questions}))
+            state = {"instruction": instruction, "keys": keys, "handles": handles}
+            state_path.write_text(json.dumps(state, ensure_ascii=False))
+        scores = {}
+        for handle in state["handles"]:
+            while True:
+                result = collect(handle)
+                if result["complete"]:
+                    break
+                print(f"jev batch {handle['id']}: waiting", file=sys.stderr)
+                time.sleep(poll)
+            for row in result["results"]:
+                answer = ((row.get("response") or {}).get("answers") or {}).get("relevant") or {}
+                scores[row["custom_id"]] = answer.get("noul")
+        relevant, rejected = [], []
+        for key in keys:
+            m = rows[key]
+            record = {
+                "group_id": m.get("group_id"),
+                "group_name": m.get("group_name"),
+                "group_alias": m.get("group_alias"),
+                "message_id": m["id"],
+                "message_url": m.get("message_url"),
+                "date": m.get("date"),
+                "user_id": m.get("user_id"),
+                "user_alias": m.get("user_alias"),
+                "text": m.get("text"),
+                "keywords": m["keywords"],
+                "jev_score": scores.get(key),
+            }
+            (relevant if record["jev_score"] is not None and record["jev_score"] >= threshold else rejected).append(record)
+        meta = {"instruction": instruction, "threshold": threshold, "sources": [str(Path(p).resolve()) for p in messages], "errors": sum(scores.get(k) is None for k in keys)}
+        out.write_text(json.dumps({**meta, "messages": relevant}, ensure_ascii=False, indent=1))
+        out.with_name(out.stem + ".rejected.json").write_text(json.dumps({**meta, "messages": rejected}, ensure_ascii=False, indent=1))
+        state_path.unlink()
+        print(f"{len(relevant)} relevant, {len(rejected)} rejected, {meta['errors']} errors", file=sys.stderr)
+        return str(out.resolve())
+
+
 def main():
-    parser = argparse.ArgumentParser(
-        description="Bounded typed Jev evaluations; outputs are heuristics, not evidence. Never overwrites files."
-    )
-    parser.add_argument("mode", choices=("evaluate", "submit", "collect", "cancel"))
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--output", required=True)
-    args = parser.parse_args()
-    target = Path(args.output).resolve()
     try:
-        raw = Path(args.input).read_bytes()
-        if len(raw) > MAX_BYTES:
-            raise ClientError("input_too_large")
-        data = json.loads(raw)
-        if target.exists():
-            raise ClientError("output_exists")
-        receipt = {
-            "input": str(Path(args.input).resolve()),
-            "input_sha256": hashlib.sha256(raw).hexdigest(),
-            "mode": args.mode,
-        }
-        save(str(target) + ".request.json", receipt)
-        if args.mode == "evaluate":
-            result = evaluate(data)
-        elif args.mode == "submit":
-            result = submit(
-                data,
-                persist=lambda handle: save(
-                    str(target) + ".handle.json", {**handle, **receipt}
-                ),
-            )
-        elif args.mode == "collect":
-            result = collect(data)
-        else:
-            result = cancel(data)
-        save(target, {**result, **receipt})
-        print(target)
-        return 1 if args.mode == "evaluate" and result["counts"].get("error") else 0
+        fire.Fire(Jev, serialize=lambda value: value)
     except (ClientError, OSError, ValueError, TypeError) as error:
-        print(
-            str(error) if isinstance(error, ClientError) else "local_file_error",
-            file=sys.stderr,
-        )
-        return 2
+        print(str(error) if isinstance(error, ClientError) else f"local_file_error: {error}", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

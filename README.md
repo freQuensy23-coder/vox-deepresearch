@@ -2,21 +2,13 @@
 
 Vox DeepResearch is a fork of [DeerFlow](https://github.com/bytedance/deer-flow)
 for agent-led research into public Telegram communities and discussions through
-Vox. It includes the full DeerFlow application, a
-[research guide](skills/public/telegram-research/SKILL.md), and a
-[Python CLI](skills/public/telegram-research/references/vox-tools.md) for individual
-Vox read operations.
-
-The lead agent explores broadly through keyword searches and reads new leads
-from one shared JSON registry. Each depth subagent investigates one Telegram
-group (with a documented exception for a closely linked group cluster), saves
-at most one page of sourced facts, and contributes new keywords, relevant
-groups, external links, and public business contacts. Substantive participants'
-other public chats help discover new communities. Assess relevance by reading
-message meaning and context, directly or with optional Jev assistance; keyword
-or regex matches must not decide which candidates are discarded. The initial
-search aims for roughly 30 relevant groups, without capping coverage or adding
-irrelevant groups to reach that number.
+Vox. It includes the full DeerFlow application and a
+[research guide](skills/public/telegram-research/SKILL.md) describing
+the research pipeline: keyword message search over the requested period,
+semantic group search, Jev filtering with eye review, ranking and full download
+of the top 16 groups, one subagent per group (summary, external links and
+contacts, key participants, new keywords), and further rounds while new keywords
+appear. `scripts/vox.py` is the single Vox CLI and goes through the Vox proxy.
 
 The lead can generate a JSON task manifest on disk and submit it through
 `batch_task(items_file=...)`, then continue breadth research while depth agents
@@ -1294,25 +1286,12 @@ A standard Agent Skill is a structured capability module — a Markdown file tha
 
 Skills are loaded progressively — only when the task needs them, not all at once. This keeps the context window lean and makes DeerFlow work well even with token-sensitive models.
 
-The built-in [Telegram research skill](skills/public/telegram-research/SKILL.md)
-guides public-community discovery and discussion research through Vox. It starts
-with keywords and object context, reads candidate chats, then expands through
-links and participants' observed public activity. The agent chooses each next
-step, adds vocabulary from actual messages, and repeats expansion across the
-growing set of chats until it can support an answer. It identifies substantive
-key participants and reads promising destinations before recommending them.
-Keyword guidance covers task relevance, participants' language, search scope,
-and the usefulness of returned messages rather than raw match counts. Missing links
-do not block research: it can continue through authors and keywords. The bundled
-Python CLI provides individual read operations. Reads accept
-streaming search responses, including progress and a final result with coverage
-metadata. They also accept
-`--public-card` to reuse a previously retrieved group card without repeating its
-network lookup; the card must confirm the same public group. Supply
-`VOX_API_KEY` through the run's `config.context.secrets` for sandbox use (a
-Gateway `.env` value alone is not forwarded). See the
-[command reference](skills/public/telegram-research/references/vox-tools.md) for
-setup and coverage limits. Activate it with, for example,
+The built-in [Telegram research skill](skills/public/telegram-research/SKILL.md) runs
+the research pipeline: keyword message search over the requested period,
+semantic group search, Jev filtering with eye review, ranking and full download
+of the top 16 groups, one subagent per group (summary, external links and
+contacts, key participants, new keywords), and further rounds while new keywords
+appear. `scripts/vox.py` is the single Vox CLI and goes through the Vox proxy. Activate it with, for example,
 `/telegram-research Найди чаты, где студенты обсуждают подработку`.
 
 When deferred skill discovery is enabled, `describe_skill` ranks installed skills by bounded, Unicode-normalized intent-term coverage across names and descriptions. Natural multi-term requests can therefore find a relevant skill without requiring one exact phrase, while exact `select:` and required-name `+prefix` lookups remain available. Ranked searches use up to 256 characters and return up to five results; exact `select:` lists are not truncated and return all requested catalog matches.

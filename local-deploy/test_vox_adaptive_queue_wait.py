@@ -100,9 +100,9 @@ def test_cli_relay_mode_has_no_idle_cutoff(monkeypatch):
             seen.append(timeout)
             return io.BytesIO(FINAL)
 
-    monkeypatch.setattr(vox, "RELAY_OPENER", FakeOpener())
+    monkeypatch.setattr(vox, "_OPENER", FakeOpener())
     assert (
-        vox.call(
+        vox._call(
             "/search/text",
             {"query": "local", "timeout": 600, "stream": True},
         )["stop_reason"]
@@ -114,7 +114,7 @@ def test_cli_relay_mode_has_no_idle_cutoff(monkeypatch):
 def test_cli_requires_relay(monkeypatch):
     monkeypatch.delenv("VOX_RELAY_URL", raising=False)
     with pytest.raises(vox.VoxError, match="VOX_RELAY_URL"):
-        vox.call("/groups/1")
+        vox._call("/groups/1")
 
 
 @pytest.fixture

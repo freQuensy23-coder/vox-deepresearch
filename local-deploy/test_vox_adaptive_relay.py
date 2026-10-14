@@ -425,15 +425,13 @@ def test_only_root_of_pretty_json_can_mark_completion():
     assert probe.finish() == "failure"
 
 
-@pytest.mark.parametrize(
-    "stream,message_count", [("true", 3), ("false", 3), ("true", 1179)]
-)
-def test_real_vox_cli_search_page_round_trip(rig, tmp_path, stream, message_count):
+@pytest.mark.parametrize("message_count", [3, 1179])
+def test_real_vox_cli_search_round_trip(rig, tmp_path, message_count):
     """Execute the shipped CLI, with a process-level guard forbidding external sockets."""
     server = rig.start()
     messages = [
         {
-            "message_id": index,
+            "id": index,
             "group_id": -1001 if index < 3 else -1002,
             "group_alias": "synthetic_chat",
             "user_id": index + 100,
@@ -451,9 +449,7 @@ def test_real_vox_cli_search_page_round_trip(rig, tmp_path, stream, message_coun
         "stopped_at": "2026-01-01T00:00:00Z",
     }
     encoded = json.dumps(terminal, ensure_ascii=False).encode()
-    rig.cli_body = (
-        (b'{"point":0}\n{"point":100}\n' if stream == "true" else b"") + encoded + b"\n"
-    )
+    rig.cli_body = b'{"point":0}\n{"point":100}\n' + encoded + b"\n"
     guard = tmp_path / "sitecustomize.py"
     guard.write_text(
         "import socket\n"
@@ -489,24 +485,13 @@ def test_real_vox_cli_search_page_round_trip(rig, tmp_path, stream, message_coun
         [
             sys.executable,
             str(script),
-            "search-page",
+            "search",
             "cli",
-            *(["--limit", "2"] if message_count == 3 else []),
-            "--from",
+            "--since",
             "2026-01-01T00:00:00Z",
-            "--to",
+            "--until",
             "2026-02-01T00:00:00Z",
-            "--stream",
-            stream,
-            "--timeout",
-            "10",
-            "--no-forwards",
-            "--dedup",
-            "--type",
-            "post",
-            "--exclude-users",
-            "999",
-            "--output",
+            "--out",
             str(output),
         ],
         cwd=tmp_path,
@@ -518,31 +503,23 @@ def test_real_vox_cli_search_page_round_trip(rig, tmp_path, stream, message_coun
     assert result.returncode == 0, result.stderr
     assert str(output) in result.stdout
     data = json.loads(output.read_text(encoding="utf-8"))
-    assert data["messages"] == messages
-    assert (
-        data["stop_reason"] == "finished"
-        and data["stopped_at"] == terminal["stopped_at"]
-    )
-    assert data["count"] == data["returned_count"] == message_count
-    assert [g["message_count"] for g in data["group_summary"]] == sorted(
-        [2, message_count - 2], reverse=True
-    )
+    keep = ("id", "group_id", "group_alias", "user_id", "text", "date")
+    assert data["messages"] == [{k: m[k] for k in keep} for m in messages]
+    assert data["complete"] is True and data["pages"] == 1
+    assert data["groups"] == {"-1002": message_count - 2, "-1001": 2}
     assert len(rig.requests) == 1
     method, target, headers, body = rig.requests[0]
     assert method == "GET" and not body
     params = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(target).query))
     assert params == {
         "query": "cli",
-        "limit": "2" if message_count == 3 else "2000",
+        "limit": "2000",
         "from_date": "2026-01-01T00:00:00Z",
         "to_date": "2026-02-01T00:00:00Z",
-        "stream": stream,
+        "stream": "true",
         "order": "desc",
-        "message_type": "post",
-        "timeout": "10",
-        "exclude_from_users": "999",
-        "exclude_forwards": "true",
-        "deduplicate": "true",
+        "message_type": "all",
+        "timeout": "600",
     }
     assert headers["Authorization"] == "Bearer local-test-key"
     assert "X-Vox-Tool-Trace" not in headers

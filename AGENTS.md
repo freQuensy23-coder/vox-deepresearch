@@ -2,6 +2,8 @@
 
 This is the source of truth for repository agent guidance; `CLAUDE.md` imports it via `@AGENTS.md`.
 
+**Vox:** all Vox access goes through exactly one fire-based CLI, `skills/public/telegram-research/scripts/vox.py`, which calls only our Vox proxy (`local-deploy/vox_adaptive_relay.py`, rate limiting) — no other Vox scripts or clients.
+
 This **monorepo orientation layer** maps the repo. For module details, read its guide:
 
 - **[backend/AGENTS.md](backend/AGENTS.md)** — backend depth: harness/app split, agent &
