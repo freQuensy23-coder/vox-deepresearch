@@ -79,17 +79,19 @@ def test_proxy_timeout_surfaces_its_advice(monkeypatch):
         vox._call("/search/text", {"query": "вахта"})
 
 
-def test_download_unions_frequent_words_inside_group(tmp_path, monkeypatch):
-    monkeypatch.setattr(vox, "FREQUENT_WORDS", ("что", "это"))
-    by_word = {"что": [row(2, "2026-01-05T00:00:00Z"), row(1, "2026-01-02T00:00:00Z")], "это": [row(3, "2026-01-07T00:00:00Z"), row(2, "2026-01-05T00:00:00Z")]}
+def test_search_inside_group_and_authors(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     calls = []
-    monkeypatch.setattr(vox, "_call", lambda path, params: calls.append(params) or {"stop_reason": "finished", "messages": by_word[params["query"]]})
-    out = tmp_path / "m.json"
-    vox.Vox().download(-1001, since="2026-01-01", until="2026-02-01", out=str(out))
-    data = json.loads(out.read_text())
-    assert [m["id"] for m in data["messages"]] == [1, 2, 3]
-    assert data["words_done"] == ["что", "это"] and data["complete"]
-    assert {c["include_groups_ids"] for c in calls} == {"-1001"}
+    rows = [row(3, "2026-01-07T00:00:00Z", user=1), row(2, "2026-01-05T00:00:00Z", user=1), row(1, "2026-01-02T00:00:00Z", user=2)]
+    monkeypatch.setattr(vox, "_call", lambda path, params: calls.append(params) or {"stop_reason": "finished", "messages": rows})
+    path = vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01", group=-1001)
+    assert path.endswith("vox/groups/-1001/search/вахта.json")
+    assert calls[0]["include_groups_ids"] == "-1001"
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps({"messages": [row(4, "2026-01-08T00:00:00Z", group=-2002, user=1), row(3, "2026-01-07T00:00:00Z", user=1)]}))
+    data = json.loads(Path(vox.Vox().authors(-1001, path, str(other), top=5)).read_text())
+    assert data["total_messages"] == 3
+    assert [(a["user_id"], a["messages"]) for a in data["authors"]] == [(1, 2), (2, 1)]
 
 
 def test_rank_scores_unique_relevant_size_and_both_sources(tmp_path):

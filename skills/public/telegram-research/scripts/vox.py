@@ -9,11 +9,10 @@ is the caller's decision.
 Each command saves JSON and prints its path. Commands that page through dates
 checkpoint after every page and resume from the same output file.
 
-    vox.py search QUERY --since 2025-10-14 [--until ...] [--kind all|post|comment]
+    vox.py search QUERY --since 2025-10-14 [--until ...] [--kind all|post|comment] [--group GROUP_ID]
     vox.py semantic QUERY [--limit 50]
     vox.py group GROUP_ID
-    vox.py download GROUP_ID --since 2025-10-14
-    vox.py authors DOWNLOAD.json [--top 30]
+    vox.py authors GROUP_ID SEARCH.json [SEARCH2.json ...] [--top 30]
     vox.py rank RELEVANT.json SEMANTIC.json [SEMANTIC2.json ...] [--top 16] [--exclude ID,ID]
 """
 
@@ -32,14 +31,6 @@ import fire
 
 PAGE = 2000
 SEARCH_TIMEOUT = 600
-# Vox has no "all messages of a chat" endpoint and rejects queries shorter than
-# three characters, so a group download is the union of searches for frequent
-# words inside that group. Very short messages without any of them are missed.
-FREQUENT_WORDS = (
-    "что", "это", "как", "так", "все", "всё", "уже", "есть", "если", "или",
-    "для", "там", "тут", "нет", "кто", "когда", "можно", "надо", "будет", "был",
-    "было", "только", "еще", "ещё", "вот", "где", "сейчас", "меня", "вас", "его",
-)
 
 
 class VoxError(Exception):
@@ -165,20 +156,23 @@ def _traverse(state, out, query, include=None):
 class Vox:
     """Vox research CLI. Output is JSON on disk; the printed value is its path."""
 
-    def search(self, query, since, until=None, kind="all", out=None):
-        """All messages matching QUERY (words are ANDed) from SINCE to UNTIL (default now). Resumes OUT."""
+    def search(self, query, since, until=None, kind="all", group=None, out=None):
+        """All messages matching QUERY (words are ANDed) from SINCE to UNTIL (default now),
+        optionally only inside GROUP. Resumes OUT."""
         query = str(query)
         if not 3 <= len(query) < 50:
             raise VoxError("Vox needs a query of 3..49 characters.")
-        out = Path(out or f"vox/search/{_slug(query)}.json")
+        group = int(group) if group is not None else None
+        default = f"vox/groups/{group}/search/{_slug(query)}.json" if group else f"vox/search/{_slug(query)}.json"
+        out = Path(out or default)
         if out.exists():
             state = _load(out)
-            if (state["query"], state["since"], state["kind"]) != (query, _iso(since), kind):
+            if (state["query"], state["since"], state["kind"], state.get("group")) != (query, _iso(since), kind, group):
                 raise VoxError(f"{out} holds a different search; pass another --out.")
         else:
             until = _iso(until or datetime.now(timezone.utc))
-            state = {"query": query, "since": _iso(since), "until": until, "kind": kind, "cursor": until, "pages": 0, "messages": []}
-        _traverse(state, out, query)
+            state = {"query": query, "group": group, "since": _iso(since), "until": until, "kind": kind, "cursor": until, "pages": 0, "messages": []}
+        _traverse(state, out, query, include=str(group) if group else None)
         state["complete"] = True
         state["groups"] = dict(Counter(str(m["group_id"]) for m in state["messages"] if m.get("group_id")).most_common())
         return _save(out, state)
@@ -204,42 +198,24 @@ class Vox:
             card["url"] = f"https://t.me/{card['alias']}"
         return _save(out or f"vox/groups/{int(group_id)}/card.json", card)
 
-    def download(self, group_id, since, until=None, out=None):
-        """Every message of a group from SINCE (union of frequent-word searches inside it). Resumes OUT."""
+    def authors(self, group_id, *searches, top=30):
+        """Most active authors of GROUP_ID across search outputs, with sample message URLs."""
         gid = int(group_id)
-        out = Path(out or f"vox/groups/{gid}/messages.json")
-        if out.exists():
-            state = _load(out)
-            if (state["group_id"], state["since"]) != (gid, _iso(since)):
-                raise VoxError(f"{out} holds a different download; pass another --out.")
-        else:
-            until = _iso(until or datetime.now(timezone.utc))
-            state = {"group_id": gid, "since": _iso(since), "until": until, "kind": "all", "words_done": [], "cursor": None, "pages": 0, "messages": []}
-        for word in FREQUENT_WORDS:
-            if word in state["words_done"]:
-                continue
-            if state["cursor"] is None:
-                state["cursor"] = state["until"]
-            _traverse(state, out, word, include=str(gid))
-            state["words_done"].append(word)
-            _save(out, state)
-        state["complete"] = True
-        state["messages"].sort(key=lambda m: m.get("date") or "")
-        return _save(out, state)
-
-    def authors(self, download, top=30):
-        """Most active authors of a downloaded group, with sample message URLs."""
-        data = _load(download)
-        counts = Counter(m["user_id"] for m in data["messages"] if m.get("user_id"))
+        messages = {}
+        for path in searches:
+            for m in _load(path)["messages"]:
+                if m.get("group_id") == gid:
+                    messages[m["id"]] = m
+        counts = Counter(m["user_id"] for m in messages.values() if m.get("user_id"))
         aliases, samples = {}, defaultdict(list)
-        for m in data["messages"]:
+        for m in messages.values():
             if m.get("user_id"):
                 if not aliases.get(m["user_id"]):
                     aliases[m["user_id"]] = m.get("user_alias")
                 if len(samples[m["user_id"]]) < 5 and m.get("message_url"):
                     samples[m["user_id"]].append(m["message_url"])
         rows = [{"user_id": uid, "user_alias": aliases[uid], "messages": n, "sample_urls": samples[uid]} for uid, n in counts.most_common(int(top))]
-        return _save(Path(download).with_name("authors.json"), {"group_id": data.get("group_id"), "total_messages": len(data["messages"]), "authors": rows})
+        return _save(f"vox/groups/{gid}/authors.json", {"group_id": gid, "total_messages": len(messages), "authors": rows})
 
     def rank(self, relevant, *semantic, top=16, exclude="", out="vox/ranking.json"):
         """Top groups by relevant unique messages + group size, each normalised, +1 if found by both searches."""

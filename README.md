@@ -6,14 +6,13 @@ for agent-driven research of public Telegram discussions through Vox.
 **Research pipeline** ([SKILL.md](skills/public/telegram-research/SKILL.md)):
 keyword message search over the requested period, semantic group search, Jev
 filtering of messages with eye review and re-runs, ranking of the top 16 groups,
-download of those groups, one subagent per group (summary, external links and
-contacts, active participants, new keywords), and new rounds while new keywords
-appear. The agent chooses keywords, the Jev instruction and when to stop.
+one subagent per group that runs detailed searches inside it over a wider word
+list (summary, external links and contacts, active participants, new keywords),
+and new rounds while new keywords appear. The agent chooses keywords, the Jev instruction and when to stop.
 
 **Tools.** `skills/public/telegram-research/scripts/vox.py` is the only Vox
 client; `scripts/jev.py` talks to the Jev bridge. Vox has no endpoint for a
-group's full history, so `vox.py download` collects a group through text
-searches inside it.
+group's full history; `vox.py search --group` searches inside one group.
 
 **Services**, all configured in `config.yaml` with secrets in the root `.env`:
 
