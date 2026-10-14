@@ -17,8 +17,9 @@ additional cap of 64 commands. Research supports 32 concurrent depth agents,
 
 Vox uses one upstream request at a time behind a FIFO queue. Retries,
 `Retry-After`, and stream fallbacks are handled inside the proxy. Its total
-10-second execution deadline starts after admission; expiry advises reducing
-the date interval. See [the proxy contract](VOX_DYNAMIC_ADMISSION.md).
+10-second deadline applies to each individual HTTP call to Vox; queue and
+retry waits are outside that clock. Fast failures retry without an overall
+retry deadline. A call exceeding 10 seconds advises reducing the date interval. See [the proxy contract](VOX_DYNAMIC_ADMISSION.md).
 
 The Jev client and bridge forward optional batch policy unchanged. Omitting it
 uses the gateway's own defaults; the research system adds no free-only policy,

@@ -3,7 +3,7 @@ from test_vox_relay import relays, request, upstream  # noqa: F401
 from test_vox_relay_observability import completed
 
 
-def test_caller_trace_context_is_not_forwarded_or_written_to_queue_state(
+def test_caller_trace_context_is_preserved_in_private_receipts_and_not_forwarded(
     relays,  # noqa: F811
     upstream,  # noqa: F811
 ):
@@ -23,4 +23,14 @@ def test_caller_trace_context_is_not_forwarded_or_written_to_queue_state(
         for _, _, headers, _ in upstream.requests
         for name in headers
     )
-    assert not server.state_dir.exists()
+    files = list((server.state_dir / "traces").glob("*.json"))
+    rows = [json.loads(path.read_text(encoding="utf-8")) for path in files]
+    assert all(row["tool_correlation"] == context for row in rows)
+    assert {row["event"] for row in rows} == {
+        "queue_entry",
+        "admitted",
+        "upstream_headers",
+        "end",
+    }
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in files)
+    assert len(list((server.state_dir / "traces").glob("*.body"))) == 1

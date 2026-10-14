@@ -56,7 +56,13 @@ def stack(tmp_path):
                 if query == "disconnect" and attempt == 1:
                     self.connection.shutdown(socket.SHUT_RDWR)
                     return
-                error = query == "permanent" or query == "transient" and attempt == 1
+                error = (
+                    query == "permanent"
+                    or query == "transient"
+                    and attempt == 1
+                    or query == "many-errors"
+                    and attempt <= 5
+                )
                 limited = query.startswith("limited") and attempt == 1
                 status = 429 if limited else 503 if error else 200
                 payload = (
@@ -73,7 +79,17 @@ def stack(tmp_path):
                         if query == "partial"
                         else {"error": "PRIVATE VOX FAILURE"}
                     )
+                if query == "deep":
+                    nested = "valid"
+                    for _ in range(129):
+                        nested = [nested]
+                    payload = {
+                        "messages": [{"nested": nested}],
+                        "stop_reason": "finished",
+                    }
                 body = json.dumps(payload).encode()
+                if query == "deep":
+                    state.deep_body = body
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header(
@@ -91,7 +107,7 @@ def stack(tmp_path):
                         if query == "limited"
                         else formatdate(time.time() + 2, usegmt=True)
                         if query == "limited-date"
-                        else "60",
+                        else "0.6",
                     )
                 if error:
                     self.send_header("X-Private-Vox", "hidden")
@@ -142,17 +158,18 @@ def stack(tmp_path):
 
 def fetch(state, query, *, path=None):
     connection = http.client.HTTPConnection(*state.server.server_address, timeout=25)
-    connection.request(
-        "GET",
-        path
-        or "/search/text?query="
-        + query
-        + "&from_date=2026-01-01&to_date=2026-10-14&stream=true",
-    )
-    response = connection.getresponse()
-    result = response.status, dict(response.getheaders()), response.read()
-    connection.close()
-    return result
+    try:
+        connection.request(
+            "GET",
+            path
+            or "/search/text?query="
+            + query
+            + "&from_date=2026-01-01&to_date=2026-10-14&stream=true",
+        )
+        response = connection.getresponse()
+        return response.status, dict(response.getheaders()), response.read()
+    finally:
+        connection.close()
 
 
 def await_calls(state, count):
@@ -219,19 +236,24 @@ def test_upstream_errors_and_partial_stream_never_escape(stack, query):
     assert "Retry-After" not in result[1]
 
 
-@pytest.mark.parametrize("query", ["permanent", "limited-long"])
-def test_retries_share_one_deadline_and_hide_upstream_error(stack, monkeypatch, query):
-    monkeypatch.setattr(relay, "REQUEST_DEADLINE", 0.4)
+@pytest.mark.parametrize("query", ["many-errors", "limited-long"])
+def test_retries_and_retry_after_can_exceed_attempt_budget(stack, monkeypatch, query):
+    monkeypatch.setattr(relay, "REQUEST_DEADLINE", 0.2)
     started = time.monotonic()
     status, headers, body = fetch(stack, query)
-    assert status == 504
-    assert 0.35 <= time.monotonic() - started < 1
-    assert json.loads(body)["error"] == "request_timeout"
-    assert "date interval" in json.loads(body)["message"]
+    assert status == 200
+    assert time.monotonic() - started >= 0.45
+    assert json.loads(body)["stop_reason"] == "finished"
     assert "X-Private-Vox" not in headers and b"PRIVATE" not in body
-    if query == "limited-long":
-        assert len(stack.calls) == 1
-    assert fetch(stack, "ordinary")[0] == 200
+    assert len(stack.calls) == (6 if query == "many-errors" else 2)
+    assert stack.maximum == 1
+
+
+def test_deep_complete_response_has_no_added_nesting_gate(stack):
+    status, _, body = fetch(stack, "deep")
+    assert status == 200
+    assert body == stack.deep_body
+    assert len(stack.calls) == 1
 
 
 def test_production_ten_seconds_queue_wait_separate_and_abort_releases_slot(stack):
@@ -293,7 +315,7 @@ def test_real_cli_receives_proxy_timeout_date_advice(
             sys.executable,
             str(script),
             command,
-            "permanent",
+            "slow",
             "--from",
             "2026-01-01",
             "--to",
@@ -385,20 +407,79 @@ def test_dns_wait_cannot_extend_total_deadline_or_start_late_vox_request(
         released.set()
 
 
-def test_tls_handshake_uses_total_deadline_and_closes_before_next_request(
-    stack, monkeypatch
-):
+def test_tls_handshake_uses_attempt_deadline_and_closes_socket(stack, monkeypatch):
     monkeypatch.setattr(relay, "REQUEST_DEADLINE", 0.2)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    listener.settimeout(2)
+    closed = threading.Event()
+
+    def silent_tls_peer():
+        connection, _ = listener.accept()
+        try:
+            connection.settimeout(2)
+            while connection.recv(65536):
+                pass
+            closed.set()
+        finally:
+            connection.close()
+
+    worker = threading.Thread(target=silent_tls_peer)
+    worker.start()
     original = socket.getaddrinfo
 
     def local_address(host, port, *args, **kwargs):
         if host == relay.UPSTREAM:
-            return original(*stack.upstream_address, *args, **kwargs)
+            return original(*listener.getsockname(), *args, **kwargs)
         return original(host, port, *args, **kwargs)
 
     monkeypatch.setattr(socket, "getaddrinfo", local_address)
     stack.server.transport_factory = relay.HTTPSUpstream
-    started = time.monotonic()
-    assert fetch(stack, "ordinary")[0] == 504
-    assert time.monotonic() - started < 0.5
-    assert not stack.calls
+    try:
+        started = time.monotonic()
+        assert fetch(stack, "ordinary")[0] == 504
+        assert time.monotonic() - started < 0.5
+        assert closed.wait(1)
+        assert not stack.calls
+    finally:
+        listener.close()
+        worker.join(2)
+
+
+def test_private_receipts_preserve_error_bytes_and_retries_not_agent_payload(stack):
+    status, _, payload = fetch(stack, "transient")
+    assert status == 200 and b"PRIVATE" not in payload
+    stack.server.trace_writer.pending.join()
+    files = list((stack.server.state_dir / "traces").glob("*.json"))
+    rows = [json.loads(path.read_text(encoding="utf-8")) for path in files]
+    end = next(row for row in rows if row["event"] == "end")
+    raw = (stack.server.state_dir / "traces" / end["body_path"]).read_bytes()
+    assert b"PRIVATE VOX FAILURE" in raw and b"finished" in raw
+    assert end["upstream_attempt"] == 2
+    assert end["body_bytes"] == len(raw)
+    assert {
+        row["upstream_attempt"] for row in rows if row["event"] == "upstream_headers"
+    } == {1, 2}
+
+
+def test_blocked_receipt_writer_does_not_hold_http_slot_or_timer(stack, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    original = relay.os.fsync
+
+    def slow_fsync(fd):
+        entered.set()
+        release.wait(3)
+        return original(fd)
+
+    monkeypatch.setattr(relay.os, "fsync", slow_fsync)
+    try:
+        start = time.monotonic()
+        assert fetch(stack, "ordinary")[0] == 200
+        assert entered.wait(1)
+        assert fetch(stack, "ordinary")[0] == 200
+        assert time.monotonic() - start < 0.5
+        assert stack.maximum == 1
+    finally:
+        release.set()
+        stack.server.trace_writer.pending.join()

@@ -1,4 +1,7 @@
 import http.client
+import hashlib
+import queue
+import uuid
 import ipaddress
 import json
 import math
@@ -14,8 +17,6 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-
-from vox_json_probe import CompletionProbe
 
 
 UPSTREAM = "api.vox-lab.com"
@@ -220,7 +221,8 @@ def validate_target(method, target):
 class Gate:
     """One active request and an unbounded FIFO of callers; no adaptive state."""
 
-    def __init__(self):
+    def __init__(self, directory):
+        self.directory = Path(directory)
         self.condition = threading.Condition()
         self.waiting = []
         self.active = False
@@ -369,6 +371,219 @@ class HTTPSUpstream:
         self.connection.close()
 
 
+class RequestObservation:
+    lock = threading.Lock()
+
+    def __init__(self, gate, writer):
+        self.gate = gate
+        self.writer = writer
+        self.attempt = 0
+        self.request_id = str(uuid.uuid4())
+        self.started = time.monotonic()
+        self.queued = self.admitted = None
+        self.route_class = "unknown"
+        self.status = None
+        self.origin = "local_queue"
+        self.tool_correlation = None
+        self.body_stream = None
+        self.body_hash = hashlib.sha256()
+        self.body_bytes = 0
+        self.trace_gaps = []
+        self.request_payload = None
+
+    def capture(self, chunk):
+        self.writer.submit(self._capture, chunk)
+
+    def _capture(self, chunk):
+        directory = self.gate.directory / "traces"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        if self.body_stream is None:
+            fd = os.open(
+                directory / (self.request_id + ".body"),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+            )
+            self.body_stream = os.fdopen(fd, "wb")
+        self.body_stream.write(chunk)
+        self.body_stream.flush()
+        self.body_hash.update(chunk)
+        self.body_bytes += len(chunk)
+
+    def route(self, path):
+        routes = {
+            "/search/text": "search_text",
+            "/search/ai/raw/GROUP": "search_group",
+            "/reporter/parse": "reporter_preview",
+            "/health": "health",
+            "/status": "status",
+        }
+        self.route_class = routes.get(path, "unknown")
+        for pattern, name in (
+            (r"/groups/-[0-9]+", "group"),
+            (r"/groups/-[0-9]+/messages", "group_messages"),
+            (r"/ai_analytics/GROUP/-[0-9]+", "group_analytics"),
+            (r"/ai_analytics/custom/GROUP/-[0-9]+", "group_custom_analytics"),
+            (r"/user_tracker/[0-9]+/panels/groups", "user_groups"),
+            (r"/user_tracker/[0-9]+/panels/top_groups", "user_top_groups"),
+            (r"/user_tracker/[0-9]+/panels/messages", "user_messages"),
+        ):
+            if re.fullmatch(pattern, path):
+                self.route_class = name
+                break
+
+    def emit(self, event):
+        now = time.monotonic()
+        if event == "queue_entry":
+            self.queued = now
+        elif event == "admitted":
+            self.admitted = now
+        row = dict(
+            event=event,
+            request_id=self.request_id,
+            route_class=self.route_class,
+            timestamp=time.time(),
+            status=self.status,
+            origin=self.origin,
+            queued_elapsed=0
+            if self.queued is None
+            else (self.admitted or now) - self.queued,
+            upstream_elapsed=0 if self.admitted is None else now - self.admitted,
+            total_elapsed=now - self.started,
+        )
+        context = dict(
+            tool_correlation=self.tool_correlation,
+            request=self.request_payload,
+            upstream_attempt=self.attempt,
+            utc=datetime.now(timezone.utc).isoformat(),
+            monotonic_ns=time.monotonic_ns(),
+        )
+        self.writer.submit(self._emit, row, context)
+
+    def _emit(self, row, context):
+        event = row["event"]
+        try:
+            if event == "end" and self.body_stream is not None:
+                self.body_stream.flush()
+                os.fsync(self.body_stream.fileno())
+            if self.route_class not in {"health", "status"}:
+                directory = self.gate.directory / "traces"
+                directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+                durable = {
+                    **row,
+                    **context,
+                    "correlation_trust": "caller_supplied_not_authorization",
+                    "trace_gaps": self.trace_gaps,
+                    "body_bytes": self.body_bytes,
+                    "body_sha256": self.body_hash.hexdigest(),
+                    "body_path": self.request_id + ".body"
+                    if self.body_stream is not None
+                    else None,
+                }
+                suffix = (
+                    f"-{context['upstream_attempt']}"
+                    if event == "upstream_headers" and context["upstream_attempt"] > 1
+                    else ""
+                )
+                fd = os.open(
+                    directory / (self.request_id + "-" + event + suffix + ".json"),
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    json.dump(durable, stream, separators=(",", ":"))
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            print(json.dumps(row, allow_nan=False, separators=(",", ":")), flush=True)
+        except Exception:
+            self.trace_gaps.append(event)
+            print(
+                json.dumps(
+                    {
+                        "event": "trace_gap",
+                        "request_id": self.request_id,
+                        "missing_event": event,
+                    }
+                ),
+                flush=True,
+            )
+        finally:
+            if event == "end" and self.body_stream is not None:
+                self.body_stream.close()
+
+
+class TraceWriter:
+    """Existing private receipts are written off the request/queue critical path."""
+
+    def __init__(self):
+        self.pending = queue.Queue()
+        threading.Thread(target=self.run, daemon=True).start()
+
+    def submit(self, callback, *args):
+        self.pending.put((callback, args))
+
+    def run(self):
+        while True:
+            callback, args = self.pending.get()
+            try:
+                if callback is None:
+                    return
+                callback(*args)
+            except Exception:
+                # A trace failure must never hold an upstream slot or abort work.
+                owner = getattr(callback, "__self__", None)
+                if owner is not None:
+                    owner.trace_gaps.append("raw_body")
+                    try:
+                        print(
+                            json.dumps(
+                                {
+                                    "event": "trace_gap",
+                                    "request_id": owner.request_id,
+                                    "missing_event": "raw_body",
+                                }
+                            ),
+                            flush=True,
+                        )
+                    except Exception:
+                        pass
+            finally:
+                self.pending.task_done()
+
+
+def complete_response(payload, search):
+    try:
+        text = payload.decode("utf-8")
+        try:
+            frames = [json.loads(text)]
+        except ValueError:
+            frames = [json.loads(line) for line in text.splitlines() if line.strip()]
+    except (ValueError, UnicodeError, RecursionError):
+        return False
+    final = False
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        if (
+            any(
+                frame.get(key)
+                for key in ("error", "errors", "partial", "is_partial", "incomplete")
+            )
+            or frame.get("ok") is False
+            or frame.get("success") is False
+            or frame.get("status") in ("error", "failed")
+            or frame.get("type") == "error"
+            or (
+                frame.get("detail")
+                and set(frame) <= {"detail", "status", "status_code", "code"}
+            )
+        ):
+            return False
+        final |= frame.get("stop_reason") == "finished" and isinstance(
+            frame.get("messages"), list
+        )
+    return bool(frames) and (final or not search)
+
+
 class RelayServer(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 128
@@ -386,9 +601,23 @@ class RelayServer(ThreadingHTTPServer):
             raise ValueError("invalid relay key")
         self.key = key
         self.state_dir = Path(state_dir)
-        self.gate = Gate()
+        self.gate = Gate(state_dir)
+        self.observations = threading.local()
+        self.trace_writer = TraceWriter()
         self.transport_factory = transport_factory
         super().__init__(address, RelayHandler)
+
+    def process_request_thread(self, request, client_address):
+        self.observations.current = RequestObservation(self.gate, self.trace_writer)
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.observations.current.emit("end")
+            del self.observations.current
+
+    def server_close(self):
+        super().server_close()
+        self.trace_writer.pending.put((None, ()))
 
     def handle_error(self, request, client_address):
         pass
@@ -404,6 +633,10 @@ class RelayHandler(BaseHTTPRequestHandler):
 
     def send_error(self, code, message=None, explain=None):
         self.reply(code)
+
+    def send_response(self, code, message=None):
+        self.server.observations.current.status = code
+        super().send_response(code, message)
 
     def reply(self, status, payload=None, retry_after=None):
         body = json.dumps(
@@ -492,6 +725,13 @@ class RelayHandler(BaseHTTPRequestHandler):
             self.reply(exc.status)
             return
         self.validation_timer.cancel()
+        observation = self.server.observations.current
+        observation.route(path)
+        observation.request_payload = {
+            "method": self.command,
+            "target": self.path,
+            "body": json.loads(body) if body else None,
+        }
         trace_context = self.headers.get("X-Vox-Tool-Trace")
         if trace_context:
             try:
@@ -521,6 +761,7 @@ class RelayHandler(BaseHTTPRequestHandler):
                     if key != "tool_attempt"
                 ):
                     raise ValueError("invalid trace identity")
+                observation.tool_correlation = context
             except (ValueError, TypeError):
                 self.reply(400)
                 return
@@ -539,30 +780,20 @@ class RelayHandler(BaseHTTPRequestHandler):
         if prepared is None:
             return
         path, body = prepared
+        observation = self.server.observations.current
         if path in {"/health", "/status"}:
             self.reply(
                 200, {"ok": True} if path == "/health" else self.server.gate.read()
             )
             return
+        observation.emit("queue_entry")
         try:
             self.server.gate.acquire(self.disconnected)
         except Cancelled:
+            observation.origin = "client_cancelled"
             return
-        deadline = time.monotonic() + REQUEST_DEADLINE
-        stopped = threading.Event()
-        current_lock = threading.Lock()
-        current = None
-
-        def watch():
-            while not stopped.wait(0.01):
-                if time.monotonic() >= deadline or self.disconnected():
-                    with current_lock:
-                        if current is not None:
-                            current.abort()
-                    return
-
-        watchdog = threading.Thread(target=watch, daemon=True)
-        watchdog.start()
+        observation.origin = "upstream"
+        observation.emit("admitted")
         target = self.path
         headers = {
             "Authorization": "Bearer " + self.server.key,
@@ -574,12 +805,34 @@ class RelayHandler(BaseHTTPRequestHandler):
         if body is not None:
             headers["Content-Type"] = "application/json"
         try:
-            while time.monotonic() < deadline and not self.disconnected():
+            while not self.disconnected():
+                # Only the actual Vox call consumes this attempt's 10 seconds.
+                deadline = time.monotonic() + REQUEST_DEADLINE
+                stopped = threading.Event()
+                current_lock = threading.Lock()
+                current = None
+
+                def watch():
+                    while not stopped.wait(0.01):
+                        if time.monotonic() >= deadline or self.disconnected():
+                            with current_lock:
+                                if current is not None:
+                                    current.abort()
+                            return
+
+                watchdog = threading.Thread(target=watch, daemon=True)
+                watchdog.start()
                 response = upstream = None
                 delay = 0.1
                 payload = None
                 content_type = "application/json"
                 status = None
+                observation.attempt += 1
+                observation.request_payload = {
+                    "method": self.command,
+                    "target": target,
+                    "body": json.loads(body) if body else None,
+                }
                 try:
                     upstream = self.server.transport_factory(
                         deadline - time.monotonic()
@@ -588,30 +841,35 @@ class RelayHandler(BaseHTTPRequestHandler):
                         current = upstream
                     response = upstream.request(self.command, target, body, headers)
                     status = response.status
+                    observation.status = status
+                    observation.emit("upstream_headers")
                     delay = retry_delay(response.getheader("Retry-After"))
-                    if 200 <= status < 300:
-                        chunks = []
-                        probe = CompletionProbe(path == "/search/text")
-                        while time.monotonic() < deadline and not self.disconnected():
-                            chunk = response.read1(65536)
-                            if not chunk:
-                                if response.length not in (None, 0):
-                                    raise http.client.IncompleteRead(b"")
-                                break
-                            chunks.append(chunk)
-                            probe.feed(chunk)
-                        if probe.finish() == "success":
-                            payload = b"".join(chunks)
-                            content_type = response.getheader(
-                                "Content-Type", "application/json"
-                            )
-                        else:
-                            target = fallback_target(target)
+                    chunks = []
+                    while time.monotonic() < deadline and not self.disconnected():
+                        chunk = response.read1(65536)
+                        if not chunk:
+                            if response.length not in (None, 0):
+                                raise http.client.IncompleteRead(b"")
+                            break
+                        chunks.append(chunk)
+                        observation.capture(chunk)
+                    raw = b"".join(chunks)
+                    if 200 <= status < 300 and complete_response(
+                        raw, path == "/search/text"
+                    ):
+                        payload = raw
+                        content_type = response.getheader(
+                            "Content-Type", "application/json"
+                        )
+                    elif 200 <= status < 300:
+                        target = fallback_target(target)
                 except (OSError, ValueError, http.client.HTTPException):
                     target = fallback_target(target)
                 finally:
-                    # The slot is held until this attempt's connection is closed.
-                    # No downstream headers or partial frames have been sent.
+                    # Stop this attempt's watchdog before waiting/retrying. Close
+                    # its transport before another upstream attempt can start.
+                    stopped.set()
+                    watchdog.join()
                     with current_lock:
                         current = None
                         if upstream is not None:
@@ -619,9 +877,18 @@ class RelayHandler(BaseHTTPRequestHandler):
                     if response is not None:
                         response.close()
                 if self.disconnected():
+                    observation.origin = "client_cancelled"
                     return
                 if time.monotonic() >= deadline:
-                    break
+                    observation.origin = "request_timeout"
+                    self.reply(
+                        504,
+                        {
+                            "error": "request_timeout",
+                            "message": "Request exceeded 10 seconds. Reduce the date interval and try again.",
+                        },
+                    )
+                    return
                 if payload is not None:
                     self.close_connection = True
                     self.send_response(status)
@@ -631,20 +898,12 @@ class RelayHandler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(payload)
                     return
-                wait_until = min(deadline, time.monotonic() + delay)
+                # Retry-After/backoff is outside the per-Vox-call clock. The
+                # original FIFO owner retains its slot across all retries.
+                wait_until = time.monotonic() + delay
                 while time.monotonic() < wait_until and not self.disconnected():
-                    stopped.wait(min(0.05, wait_until - time.monotonic()))
-            if not self.disconnected():
-                self.reply(
-                    504,
-                    {
-                        "error": "request_timeout",
-                        "message": "Request exceeded 10 seconds. Reduce the date interval and try again.",
-                    },
-                )
+                    time.sleep(min(0.05, wait_until - time.monotonic()))
         finally:
-            stopped.set()
-            watchdog.join()
             self.server.gate.release()
             self.close_connection = True
 

@@ -65,9 +65,10 @@ and raw research outputs are not included in this repository.
 The [Vox proxy](local-deploy/VOX_DYNAMIC_ADMISSION.md) executes one upstream
 request at a time behind a FIFO queue. It handles upstream failures, retries,
 `Retry-After`, and incomplete-stream fallbacks internally, returning only a
-complete successful response. Each admitted request has a total 10-second
-budget; expiry returns the proxy's own error advising a smaller date interval.
-Queue waiting does not consume that budget.
+complete successful response. Each individual HTTP call to Vox has 10 seconds;
+expiry returns the proxy's own error advising a smaller date interval. Queue
+waiting and retry waits are outside that clock. Fast failures retry without
+an overall retry deadline or attempt-count cap.
 
 Long Vox commands use managed `bash(background=True)`: completed commands return
 within ten seconds; longer commands return a session ID and continue while the

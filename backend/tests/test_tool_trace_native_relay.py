@@ -46,7 +46,11 @@ def test_native_tool_cli_relay_receipt(tmp_path, monkeypatch, relays, upstream):
     completed(server)
     tools = records(tmp_path / "tools")
     end = next(row for row in tools if row["event"] == "tool_end")
-    assert not server.state_dir.exists()
+    relay_rows = [json.loads(path.read_text(encoding="utf-8")) for path in (server.state_dir / "traces").glob("*.json")]
+    assert relay_rows
+    assert all(row["tool_correlation"]["execution_id"] == end["call_id"] for row in relay_rows)
+    assert all(row["tool_correlation"]["tool_call_id"] == "native-relay-1" for row in relay_rows)
+    assert all(row["tool_correlation"]["child_call_id"] == "synthetic-child" for row in relay_rows)
     assert not any("x-vox-tool-trace" == key.lower() for _, _, headers, _ in upstream.requests for key in headers)
     assert end["payload"]["result"]["content"] == result["messages"][-1].content
     assert end["payload"]["status"] == "success"

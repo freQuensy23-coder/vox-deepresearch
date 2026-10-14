@@ -9,6 +9,8 @@ def completed(server):
     while time.monotonic() < deadline:
         with server.gate.condition:
             if not server.gate.active and not server.gate.waiting:
-                return
+                break
         time.sleep(0.005)
-    pytest.fail("relay requests did not finish")
+    else:
+        pytest.fail("relay requests did not finish")
+    server.trace_writer.pending.join()
