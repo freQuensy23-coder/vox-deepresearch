@@ -21,9 +21,7 @@ Like the original DeerFlow 1.0, we would love to give the community a minimalist
 # Install dependencies
 pnpm install
 
-# Copy environment variables
-cp .env.example .env
-# Edit .env with your configuration
+# Environment variables live in the repository-root .env (see ../.env.example)
 ```
 
 ### Development
@@ -79,7 +77,7 @@ pnpm start
 
 ### Environment Variables
 
-Key environment variables (see `.env.example` for full list):
+Key environment variables (repository-root `.env`; see `../.env.example` for the full list):
 
 ```bash
 # Backend API URL (optional, uses local Next.js/nginx proxy by default)

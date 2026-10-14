@@ -720,17 +720,6 @@ def check_image_search(config_path: Path) -> CheckResult:
     return check_web_tool(config_path, tool_name="image_search", label="image search configured")
 
 
-def check_frontend_env(project_root: Path) -> CheckResult:
-    env_path = project_root / "frontend" / ".env"
-    if env_path.exists():
-        return CheckResult("frontend/.env found", "ok")
-    return CheckResult(
-        "frontend/.env found",
-        "warn",
-        fix="Run 'make setup' or copy frontend/.env.example to frontend/.env",
-    )
-
-
 def check_sandbox(config_path: Path) -> list[CheckResult]:
     if not config_path.exists():
         return [CheckResult("sandbox configured", "skip")]
@@ -864,7 +853,6 @@ def main() -> int:
     # ── Configuration ─────────────────────────────────────────────────────────
     cfg_checks: list[CheckResult] = [
         check_env_file(project_root),
-        check_frontend_env(project_root),
         config_failure or check_config_exists(config_path),
         check_config_version(config_path, project_root),
         check_config_loadable(config_path),

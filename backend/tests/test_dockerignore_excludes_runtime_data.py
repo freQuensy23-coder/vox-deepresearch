@@ -38,7 +38,6 @@ DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 HOST_LOCAL_PATHS = [
     ".env",
     "backend/.env",
-    "frontend/.env",
     ".deer-flow/integrations/skills/provider/pack/SKILL.md",
     "backend/.deer-flow/data/deerflow.db",
     "backend/.deer-flow/.jwt_secret",
@@ -49,7 +48,6 @@ HOST_LOCAL_PATHS = [
 # Paths the build genuinely needs; the exclusions must not swallow them.
 BUILD_INPUT_PATHS = [
     ".env.example",
-    "frontend/.env.example",
     "backend/pyproject.toml",
     "backend/app/gateway/app.py",
     "backend/packages/harness/deerflow/config/extensions_config.py",

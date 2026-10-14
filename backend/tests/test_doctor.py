@@ -945,24 +945,6 @@ class TestCheckEnvFile:
 
 
 # ---------------------------------------------------------------------------
-# check_frontend_env
-# ---------------------------------------------------------------------------
-
-
-class TestCheckFrontendEnv:
-    def test_missing(self, tmp_path):
-        result = doctor.check_frontend_env(tmp_path)
-        assert result.status == "warn"
-
-    def test_present(self, tmp_path):
-        frontend_dir = tmp_path / "frontend"
-        frontend_dir.mkdir()
-        (frontend_dir / ".env").write_text("KEY=val\n")
-        result = doctor.check_frontend_env(tmp_path)
-        assert result.status == "ok"
-
-
-# ---------------------------------------------------------------------------
 # check_sandbox
 # ---------------------------------------------------------------------------
 

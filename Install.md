@@ -50,7 +50,7 @@ Consider the setup successful when all of the following are true:
   - If `make check` reports missing system dependencies such as `node`, `pnpm`, `uv`, or `nginx`, stop and report the missing tools instead of attempting privileged installs.
   - If prerequisites are satisfied, run `make install`.
   - Tell the user the recommended next command is `make dev`.
-- Inspect `config.yaml` only for missing model entries or referenced environment variable placeholders. Do not read `.env`, `frontend/.env`, or other secret-bearing files.
+- Inspect `config.yaml` only for missing model entries or referenced environment variable placeholders. Do not read `.env` or other secret-bearing files.
 - If no model is configured, tell the user they must add at least one entry under `models` in `config.yaml`.
 - If `config.yaml` references variables such as `$OPENAI_API_KEY`, tell the user which variable names still need real values, but do not verify them by opening secret-bearing files.
 - If the repository already appears configured, avoid repeating expensive work unless it is necessary to verify the environment.

@@ -109,9 +109,6 @@ def _seed_compose_file(tmp_root: Path) -> None:
 def _seed_env_examples(tmp_root: Path) -> None:
     """Provide the templates ensure_env_files copies from."""
     (tmp_root / ".env.example").write_text("# test\n", encoding="utf-8")
-    frontend = tmp_root / "frontend"
-    frontend.mkdir(exist_ok=True)
-    (frontend / ".env.example").write_text("# test\n", encoding="utf-8")
 
 
 def _run_docker_sh(tmp_root: Path, body: str) -> None:
@@ -158,7 +155,6 @@ def test_read_only_commands_do_not_create_env_files(docker_command):
         _run_docker_sh(tmp_root, f"COMPOSE_CMD=true\n{docker_command}")
 
         assert not (tmp_root / ".env").exists(), f"{docker_command} created .env"
-        assert not (tmp_root / "frontend" / ".env").exists(), f"{docker_command} created frontend/.env"
 
 
 @pytest.mark.parametrize("docker_command", ["logs --gateway", "stop", "restart"])
@@ -172,7 +168,7 @@ def test_read_only_commands_run_without_env_examples(docker_command):
 
 
 def test_ensure_env_files_copies_from_examples():
-    """start's env-file step should create .env files from their examples when missing."""
+    """start's env-file step creates the single root .env from its example when missing."""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_root = Path(tmpdir)
         _seed_env_examples(tmp_root)
@@ -184,10 +180,8 @@ ensure_env_files
 """
         subprocess.check_call([BASH_EXECUTABLE, "-lc", command])
 
-        assert (tmp_root / ".env").is_file()
-        assert (tmp_root / "frontend" / ".env").is_file()
         assert (tmp_root / ".env").read_text(encoding="utf-8") == "# test\n"
-        assert (tmp_root / "frontend" / ".env").read_text(encoding="utf-8") == "# test\n"
+        assert not (tmp_root / "frontend" / ".env").exists()
 
 
 def test_ensure_env_files_leaves_existing_env_untouched():
@@ -196,8 +190,6 @@ def test_ensure_env_files_leaves_existing_env_untouched():
         tmp_root = Path(tmpdir)
         _seed_env_examples(tmp_root)
         (tmp_root / ".env").write_text("KEEP=me\n", encoding="utf-8")
-        frontend = tmp_root / "frontend"
-        (frontend / ".env").write_text("KEEP=frontend\n", encoding="utf-8")
 
         command = f"""
 source '{SCRIPT_PATH}'
@@ -207,7 +199,6 @@ ensure_env_files
         subprocess.check_call([BASH_EXECUTABLE, "-lc", command])
 
         assert (tmp_root / ".env").read_text(encoding="utf-8") == "KEEP=me\n"
-        assert (frontend / ".env").read_text(encoding="utf-8") == "KEEP=frontend\n"
 
 
 @pytest.mark.parametrize(

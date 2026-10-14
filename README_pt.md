@@ -452,7 +452,7 @@ O `make start` e o `make start-daemon` reconstroem o frontend com `next build` a
 
 O Gateway é dono de `/api/langgraph/*` e traduz esses caminhos públicos compatíveis com LangGraph para seus routers nativos em `/api/*`, atrás do nginx.
 
-Para uma demo somente leitura sem o Gateway, rode `make build-static` a partir de `frontend/` e depois `HOSTNAME=127.0.0.1 PORT=3000 node --env-file=.env .next/standalone/server.js` no mesmo diretório. O build inclui os assets públicos da demo e resolve localmente as leituras de API suportadas por ela; escritas não ficam disponíveis. Para mostrar a contagem de estrelas do GitHub na página inicial, defina `GITHUB_OAUTH_TOKEN` em `frontend/.env` antes de iniciar o Node. O token fica no servidor; se faltarem credenciais ou o GitHub falhar, a contagem é ocultada. Reinicie o Node depois de trocar o token; não é preciso reconstruir.
+Para uma demo somente leitura sem o Gateway, rode `make build-static` a partir de `frontend/` e depois `HOSTNAME=127.0.0.1 PORT=3000 node --env-file=../.env .next/standalone/server.js` no mesmo diretório. O build inclui os assets públicos da demo e resolve localmente as leituras de API suportadas por ela; escritas não ficam disponíveis. Para mostrar a contagem de estrelas do GitHub na página inicial, defina `GITHUB_OAUTH_TOKEN` no `.env` da raiz do repositório. O token fica no servidor; se faltarem credenciais ou o GitHub falhar, a contagem é ocultada. Reinicie o Node depois de trocar o token; não é preciso reconstruir.
 
 #### LangGraph Studio (opcional)
 

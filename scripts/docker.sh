@@ -144,7 +144,6 @@ compose_preflight() {
 # "Le fichier spécifique est introuvable").
 ensure_env_files() {
     ensure_from_example "$PROJECT_ROOT/.env" "$PROJECT_ROOT/.env.example" ".env"
-    ensure_from_example "$PROJECT_ROOT/frontend/.env" "$PROJECT_ROOT/frontend/.env.example" "frontend/.env"
 }
 
 load_proxy_env_from_dotenv() {

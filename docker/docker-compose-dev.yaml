@@ -1,7 +1,7 @@
 # DeerFlow Development Environment
 #
 # Requires Docker Compose >= 2.24. The env_file entries below use the long-form
-# path/required syntax so a missing ../.env or ../frontend/.env does not abort
+# path/required syntax so a missing ../.env does not abort
 # Compose on Windows ("file not found" / "Le fichier spécifique est
 # introuvable"). Clients older than 2.24 do not understand that field and
 # reject this file with:
@@ -169,7 +169,7 @@ services:
       - DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://gateway:8001
       - DEER_FLOW_DEV_ALLOWED_ORIGINS=${DEER_FLOW_DEV_ALLOWED_ORIGINS:-127.0.0.1,::1}
     env_file:
-      - path: ../frontend/.env
+      - path: ../.env
         required: false
     networks:
       - deer-flow-dev

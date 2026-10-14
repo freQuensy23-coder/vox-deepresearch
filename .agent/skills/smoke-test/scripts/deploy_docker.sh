@@ -33,19 +33,6 @@ else
 fi
 echo ""
 
-# Check the frontend .env file
-if [ ! -f "frontend/.env" ]; then
-    echo "frontend/.env does not exist. Copying it from the example..."
-    if [ -f "frontend/.env.example" ]; then
-        cp frontend/.env.example frontend/.env
-        echo "✓ Created the frontend/.env file"
-    else
-        echo "⚠  frontend/.env.example does not exist. Please create frontend/.env manually"
-    fi
-else
-    echo "✓ frontend/.env file exists"
-fi
-echo ""
 # Initialize the Docker environment
 echo "Initializing the Docker environment..."
 make docker-init

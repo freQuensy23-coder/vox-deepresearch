@@ -150,7 +150,7 @@ exit 97
     ids=["make-up", "deploy-start", "make-down", "make-prod-logs"],
 )
 def test_production_entry_points_parse_the_compose_project_without_env_files(tmp_path: Path, command: tuple[str, ...]) -> None:
-    """A fresh clone has no .env or frontend/.env (both gitignored).
+    """A fresh clone has no .env (gitignored).
 
     `make up`, `make down` and `make prod-logs` all load docker-compose.yaml,
     so each must get past Compose's parse on such a checkout.
@@ -159,7 +159,6 @@ def test_production_entry_points_parse_the_compose_project_without_env_files(tmp
     env["REAL_DOCKER"] = DOCKER
     env["DEER_FLOW_HOME"] = str(tmp_path / "deer-flow-home")
     assert not (worktree / ".env").exists()
-    assert not (worktree / "frontend" / ".env").exists()
 
     script, *args = command
     result = subprocess.run(

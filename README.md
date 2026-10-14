@@ -688,10 +688,10 @@ unrelated Gateway requests responsive while the agent stack loads. A failed
 factory import prevents the run from being admitted.
 
 For a read-only demo without the Gateway, run `make build-static` from `frontend/`,
-then `HOSTNAME=127.0.0.1 PORT=3000 node --env-file=.env .next/standalone/server.js`
+then `HOSTNAME=127.0.0.1 PORT=3000 node --env-file=../.env .next/standalone/server.js`
 from the same directory. The build includes public demo assets and resolves
 supported demo API reads locally; writes are unavailable. To display the homepage
-GitHub star count, set `GITHUB_OAUTH_TOKEN` in `frontend/.env` before starting Node.
+GitHub star count, set `GITHUB_OAUTH_TOKEN` in the repository `.env`.
 The token stays on the server; missing credentials or GitHub failures hide the
 count. Restart Node after changing the token; no rebuild is needed.
 

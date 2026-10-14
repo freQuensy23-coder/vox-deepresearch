@@ -127,7 +127,7 @@ def _bind_address(mapping: str) -> str | None:
 
 EXPECTED_ENV_FILES = {
     "provisioner": "../.env",
-    "frontend": "../frontend/.env",
+    "frontend": "../.env",
     "gateway": "../.env",
 }
 
@@ -188,17 +188,14 @@ def test_real_compose_renders_a_checkout_without_env_files(tmp_path, variant: st
 @pytest.mark.parametrize("variant", sorted(COMPOSE_PATHS))
 def test_real_compose_still_loads_env_files_that_exist(tmp_path, variant: str):
     """Optional must not mean ignored: a present .env still reaches each service."""
-    (tmp_path / "frontend").mkdir()
     (tmp_path / ".env").write_text("ROOT_ENV_PROBE=from-root-env\n", encoding="utf-8")
-    (tmp_path / "frontend" / ".env").write_text("FRONTEND_ENV_PROBE=from-frontend-env\n", encoding="utf-8")
 
     result = _render(tmp_path, variant)
 
     assert result.returncode == 0, result.stderr
     services = json.loads(result.stdout)["services"]
     for service_name, path in EXPECTED_ENV_FILES.items():
-        key, value = ("FRONTEND_ENV_PROBE", "from-frontend-env") if path.startswith("../frontend/") else ("ROOT_ENV_PROBE", "from-root-env")
-        assert services[service_name]["environment"].get(key) == value, f"{variant} {service_name} must still load {path}"
+        assert services[service_name]["environment"].get("ROOT_ENV_PROBE") == "from-root-env", f"{variant} {service_name} must still load {path}"
 
 
 @requires_docker_compose
