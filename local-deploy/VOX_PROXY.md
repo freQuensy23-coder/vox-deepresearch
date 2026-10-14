@@ -42,5 +42,5 @@ responses, including 32 callers, retries, `Retry-After`, interrupted streams,
 client cancellation, the per-call deadline, and the actual Vox CLI:
 
 ```sh
-python -m pytest local-deploy/test_vox_simple_relay.py local-deploy/test_vox_relay.py local-deploy/test_tool_trace_relay_final.py local-deploy/test_vox_json_probe.py -q
+python -m pytest local-deploy/test_vox_simple_relay.py local-deploy/test_vox_relay.py local-deploy/test_tool_trace_relay_final.py -q
 ```
