@@ -64,7 +64,7 @@ def stack(tmp_path):
                     and attempt <= 5
                 )
                 limited = query.startswith("limited") and attempt == 1
-                status = 429 if limited else 503 if error else 200
+                status = 524 if query == "edge-timeout" else 429 if limited else 503 if error else 200
                 payload = (
                     {"error": "PRIVATE VOX FAILURE"}
                     if error or limited
@@ -254,6 +254,15 @@ def test_deep_complete_response_has_no_added_nesting_gate(stack):
     assert status == 200
     assert body == stack.deep_body
     assert len(stack.calls) == 1
+
+
+def test_vox_edge_timeout_is_a_heavy_query_not_a_retry(stack):
+    status, _, body = fetch(stack, "edge-timeout")
+    assert status == 504
+    assert json.loads(body)["error"] == "request_timeout"
+    assert "make it more specific" in json.loads(body)["message"]
+    assert len(stack.calls) == 1
+    assert fetch(stack, "ordinary")[0] == 200
 
 
 def test_default_deadline_is_250_seconds():

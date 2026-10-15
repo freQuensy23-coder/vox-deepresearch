@@ -790,7 +790,9 @@ class RelayHandler(BaseHTTPRequestHandler):
                 if self.disconnected():
                     observation.origin = "client_cancelled"
                     return
-                if time.monotonic() >= deadline:
+                # 524: Vox's edge gave up waiting for the search, the same verdict as
+                # our own deadline. Retrying would hold the FIFO slot forever.
+                if time.monotonic() >= deadline or status == 524:
                     observation.origin = "request_timeout"
                     self.reply(
                         504,
