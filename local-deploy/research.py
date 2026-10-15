@@ -4,7 +4,10 @@ Uses the embedded DeerFlowClient with the same checkpointer and thread store as
 the Gateway, so the thread appears in that user's Web UI. Events stream to
 backend/.deer-flow/research-runs/<thread_id>.jsonl.
 
-    cd backend && .venv/bin/python ../local-deploy/research.py USER_ID PROMPT_FILE
+    cd backend && .venv/bin/python ../local-deploy/research.py USER_ID PROMPT_FILE [THREAD_ID]
+
+With THREAD_ID the prompt is sent as the next message of that existing thread,
+e.g. to continue a run that stopped.
 """
 
 import json
@@ -16,10 +19,13 @@ from deerflow.client import DeerFlowClient
 from deerflow.runtime.checkpointer.provider import get_checkpointer
 from deerflow.tui.persistence import build_persistence
 
+# Waiting on minute-long Vox searches costs graph steps; a full research run needs many.
+RECURSION_LIMIT = 3000
 
-def main(user_id, prompt_file):
+
+def main(user_id, prompt_file, thread_id=None):
     prompt = Path(prompt_file).read_text(encoding="utf-8").strip()
-    thread_id = str(uuid.uuid4())
+    thread_id = thread_id or str(uuid.uuid4())
     loop, writer = build_persistence()
     writer.user_id = user_id
     writer.ensure_created(thread_id, assistant_id="lead_agent", metadata={"source": "local-deploy/research.py"})
@@ -28,7 +34,7 @@ def main(user_id, prompt_file):
     print(json.dumps({"thread_id": thread_id, "log": str(log.resolve())}), flush=True)
     client = DeerFlowClient(checkpointer=get_checkpointer(), model_name="gpt-6.1-sol", subagent_enabled=True, plan_mode=True)
     with log.open("a", encoding="utf-8") as out:
-        for event in client.stream(prompt, thread_id=thread_id, user_id=user_id, recursion_limit=1000):
+        for event in client.stream(prompt, thread_id=thread_id, user_id=user_id, recursion_limit=RECURSION_LIMIT):
             out.write(json.dumps({"type": event.type, "data": event.data}, ensure_ascii=False, default=str) + "\n")
             out.flush()
             title = event.data.get("title") if event.type == "values" and isinstance(event.data, dict) else None
@@ -38,4 +44,4 @@ def main(user_id, prompt_file):
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:3])
+    main(*sys.argv[1:4])
