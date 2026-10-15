@@ -19,8 +19,7 @@ two Vox APIs: text search and a user's messages in public chats.
 
 - [Vox proxy](local-deploy/VOX_PROXY.md) (`local-deploy/vox_relay.py`): one
   request to Vox at a time (FIFO), internal retries, only complete responses;
-  a single Vox call over 50 seconds returns an error advising a smaller date
-  interval.
+  a single Vox call over 250 seconds returns an error: the query is too heavy.
 - Jev gateway (`jev-gateway/`) and Jev bridge (`local-deploy/jev_bridge.py`).
 - DeerFlow Gateway and frontend. `make dev` starts everything locally.
 

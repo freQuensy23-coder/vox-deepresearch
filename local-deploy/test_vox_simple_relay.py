@@ -256,8 +256,8 @@ def test_deep_complete_response_has_no_added_nesting_gate(stack):
     assert len(stack.calls) == 1
 
 
-def test_default_deadline_is_fifty_seconds():
-    assert relay.REQUEST_DEADLINE == 50
+def test_default_deadline_is_250_seconds():
+    assert relay.REQUEST_DEADLINE == 250
 
 
 def test_deadline_queue_wait_separate_and_abort_releases_slot(stack, monkeypatch):
@@ -333,7 +333,7 @@ def test_real_cli_receives_proxy_timeout_date_advice(stack, monkeypatch, tmp_pat
         timeout=3,
     )
     assert result.returncode != 0
-    assert "Reduce the date interval" in result.stderr
+    assert "make it more specific" in result.stderr
     assert "PRIVATE VOX FAILURE" not in result.stderr
 
 

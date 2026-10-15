@@ -20,13 +20,13 @@ separate metadata lane is used. Queue admission has no filesystem state.
 4. Callers wait in an in-memory FIFO queue without a queue-size or queue-wait
    limit. Disconnected callers leave the queue. Cancelled active calls close
    their upstream connection before another caller is admitted.
-5. **Each individual HTTP request to Vox has a `call_timeout` limit (50 s)**, including
+5. **Each individual HTTP request to Vox has a `call_timeout` limit (250 s)**, including
    DNS, TCP, TLS, response headers, and body. Queue waiting and retry waits are
    outside this clock. Every retry gets its own `call_timeout`. There is no overall
    retry deadline or attempt-count cap: fast errors are handled until a successful
    answer arrives or the caller disconnects. If one actual Vox call exceeds
    `call_timeout`, its connection is closed and the proxy returns its own HTTP 504:
-   `{"error":"request_timeout","message":"Request exceeded 50 seconds. Reduce the date interval and try again."}`.
+   `{"error":"request_timeout","message":"Request exceeded 250 seconds. The query is too heavy: make it more specific."}`.
    This is the sole upstream-execution failure exposed to agents, not an
    upstream Vox error. `vox.py` shows this advice; narrowing the period is the agent's decision.
 

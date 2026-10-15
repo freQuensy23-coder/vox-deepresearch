@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 UPSTREAM = "api.vox-lab.com"
-REQUEST_DEADLINE = 50.0  # seconds per Vox call; set from vox_relay.call_timeout in config.yaml
+REQUEST_DEADLINE = 250.0  # seconds per Vox call; set from vox_relay.call_timeout in config.yaml
 DEFAULTS = dict(client_timeout=30.0)
 MAX_TARGET = 8192
 MAX_HEADERS = 16384
@@ -796,7 +796,7 @@ class RelayHandler(BaseHTTPRequestHandler):
                         504,
                         {
                             "error": "request_timeout",
-                            "message": f"Request exceeded {REQUEST_DEADLINE:g} seconds. Reduce the date interval and try again.",
+                            "message": f"Request exceeded {REQUEST_DEADLINE:g} seconds. The query is too heavy: make it more specific.",
                         },
                     )
                     return

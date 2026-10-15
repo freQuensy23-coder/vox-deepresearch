@@ -31,9 +31,9 @@ additional cap of 64 commands.
 
 Vox uses one upstream request at a time behind a FIFO queue. Retries,
 `Retry-After`, and stream fallbacks are handled inside the proxy. Its
-`call_timeout` (50 s) applies to each individual HTTP call to Vox; queue and
+`call_timeout` (250 s) applies to each individual HTTP call to Vox; queue and
 retry waits are outside that clock. Fast failures retry without an overall
-retry deadline. A call exceeding it advises reducing the date interval. See [the proxy contract](VOX_PROXY.md).
+retry deadline. A call exceeding it means the query is too heavy. See [the proxy contract](VOX_PROXY.md).
 
 The Jev client and bridge forward optional batch policy unchanged. Omitting it
 uses the gateway's own defaults; the research system adds no free-only policy,

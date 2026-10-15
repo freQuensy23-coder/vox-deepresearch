@@ -105,7 +105,7 @@ def test_authors_counts_filtered_messages():
 
 
 def test_proxy_timeout_surfaces_its_advice(monkeypatch):
-    body = json.dumps({"error": "request_timeout", "message": "Request exceeded 50 seconds. Reduce the date interval and try again."}).encode()
+    body = json.dumps({"error": "request_timeout", "message": "Request exceeded 250 seconds. The query is too heavy: make it more specific."}).encode()
 
     class Opener:
         def open(self, request, timeout):
@@ -113,7 +113,7 @@ def test_proxy_timeout_surfaces_its_advice(monkeypatch):
 
     monkeypatch.setenv("VOX_RELAY_URL", "http://127.0.0.1:1")
     monkeypatch.setattr(vox, "_OPENER", Opener())
-    with pytest.raises(vox.VoxError, match="Reduce the date interval"):
+    with pytest.raises(vox.VoxError, match="more specific"):
         vox._call("/search/text", {"query": "вахта"})
 
 

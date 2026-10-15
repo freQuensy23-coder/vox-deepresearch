@@ -2,9 +2,8 @@
 """Vox CLI for Telegram research. The only way to reach Vox; every call goes
 through the Vox proxy at VOX_RELAY_URL. The proxy sends one request to Vox at a
 time, retries failures itself and returns only complete results. If one Vox call
-runs past its time limit, the command fails with the proxy's advice to narrow
-the date interval; choosing smaller windows (--since/--until) is the caller's
-decision.
+runs past its time limit, the command fails: the query is too heavy and should
+be made more specific. An empty result is a valid answer.
 
 Run from the research folder. It holds:
     registry.json       keywords and whales with their status
