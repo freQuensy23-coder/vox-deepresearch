@@ -33,7 +33,7 @@ from pathlib import Path
 
 import fire
 
-PAGE = 2000
+PAGE = 10000
 SEARCH_TIMEOUT = 600
 WHALE_LIMIT = 100000
 REGISTRY = Path("registry.json")
@@ -176,10 +176,16 @@ def _registry(update):
 
 
 def _traverse(state, out, query):
-    """Page from the cursor back to `since`, newest first, checkpointing each page."""
+    """Collect every match in the window, checkpointing after each Vox call.
+
+    A response below the limit is complete for its window. A full response is
+    not: Vox returns whatever it gathered first, with gaps between dates. So a
+    full window is split in half and both halves are searched again, until each
+    returns fewer than PAGE matches.
+    """
     seen = {_key(m) for m in state["messages"]}
-    since = _date(state["since"])
-    while state["cursor"] is not None:
+    while state["pending"]:
+        low, high = state["pending"].pop()
         page = _call(
             "/search/text",
             {
@@ -187,8 +193,8 @@ def _traverse(state, out, query):
                 "limit": PAGE,
                 "order": "desc",
                 "message_type": state["kind"],
-                "from_date": _iso(since),
-                "to_date": state["cursor"],
+                "from_date": low,
+                "to_date": high,
                 "timeout": SEARCH_TIMEOUT,
                 "stream": True,
             },
@@ -198,26 +204,22 @@ def _traverse(state, out, query):
             if row.get("is_private") is not True and _key(message) not in seen:
                 seen.add(_key(message))
                 state["messages"].append(message)
-        state["pages"] += 1
-        if len(page["messages"]) < PAGE:
-            state["cursor"] = None
-        else:
-            oldest = min(_date(r["date"]) for r in page["messages"] if r.get("date"))
-            # The next page repeats the boundary second (rows are deduplicated, never skipped);
-            # step past it only when a whole page shares that second.
-            if _iso(oldest) == state["cursor"]:
-                oldest -= timedelta(seconds=1)
-            state["cursor"] = None if oldest <= since else _iso(oldest)
+        state["calls"] += 1
+        start, end = _date(low), _date(high)
+        if len(page["messages"]) >= PAGE and end - start > timedelta(seconds=1):
+            middle = _iso(start + (end - start) / 2)
+            state["pending"] += [[low, middle], [middle, high]]
         _save(out, state)
-        print(f"{query!r}: page {state['pages']}, {len(state['messages'])} messages", file=sys.stderr)
+        print(f"{query!r}: {state['calls']} calls, {len(state['pending'])} windows left, {len(state['messages'])} messages", file=sys.stderr)
 
 
 class Vox:
     """Vox research CLI. Run it from the research folder."""
 
     def search(self, query, since, until=None, kind="all"):
-        """All messages matching QUERY (words are ANDed) from SINCE to UNTIL (default now),
-        paged by date. Adds them to messages_raw.json and marks the keyword searched."""
+        """All messages matching QUERY (words are ANDed) from SINCE to UNTIL (default now).
+        Full responses are split by date until complete. Adds them to messages_raw.json
+        and marks the keyword searched."""
         query = str(query)
         if not 3 <= len(query) < 50:
             raise VoxError("Vox needs a query of 3..49 characters.")
@@ -226,7 +228,7 @@ class Vox:
         if out.exists():
             state = _load(out)
         else:
-            state = {"query": query, "since": _iso(since), "until": until, "kind": kind, "cursor": until, "pages": 0, "messages": []}
+            state = {"query": query, "since": _iso(since), "until": until, "kind": kind, "pending": [[_iso(since), until]], "calls": 0, "messages": []}
         _traverse(state, out, query)
         state["complete"] = True
         _save(out, state)

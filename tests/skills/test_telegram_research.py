@@ -36,26 +36,30 @@ def raw():
     return json.loads(Path("messages_raw.json").read_text())["messages"]
 
 
-def test_search_pages_back_by_date_pools_and_marks_keyword(monkeypatch):
+def test_full_window_is_split_until_complete_and_gaps_are_recovered(monkeypatch):
     monkeypatch.setattr(vox, "PAGE", 3)
-    pages = [
-        {"stop_reason": "finished", "messages": [row(9, "2026-01-30T00:00:00Z"), row(8, "2026-01-20T00:00:00Z"), row(7, "2026-01-10T00:00:00Z")]},
-        {"stop_reason": "finished", "messages": [row(7, "2026-01-10T00:00:00Z"), row(6, "2026-01-05T00:00:00Z")]},
-    ]
+    corpus = [row(i, f"2026-01-{d:02d}T00:00:00Z") for i, d in enumerate([30, 28, 20, 15, 10, 5, 2], start=1)]
     calls = []
-    monkeypatch.setattr(vox, "_call", lambda path, params: calls.append(params) or pages[len(calls) - 1])
+
+    def fake(path, params):
+        calls.append((params["from_date"], params["to_date"]))
+        inside = [m for m in corpus if params["from_date"] <= m["date"] <= params["to_date"]]
+        # Like Vox: a full response holds the newest and oldest matches, with a gap between.
+        page = inside if len(inside) < 3 else [inside[0], inside[1], inside[-1]]
+        return {"stop_reason": "finished", "messages": page}
+
+    monkeypatch.setattr(vox, "_call", fake)
     vox.Vox().add_keywords("вахта", source="seed")
     vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
-    assert [c["to_date"] for c in calls] == ["2026-02-01T00:00:00Z", "2026-01-10T00:00:00Z"]
-    assert all(c["from_date"] == "2026-01-01T00:00:00Z" and c["limit"] == 3 for c in calls)
-    assert [m["id"] for m in raw()] == [9, 8, 7, 6]
+    assert sorted(m["id"] for m in raw()) == [1, 2, 3, 4, 5, 6, 7]
+    assert calls[0] == ("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")
     assert raw()[0]["sources"] == ["keyword:вахта"]
     assert json.loads(Path("registry.json").read_text())["keywords"][0]["status"] == "searched"
 
 
-def test_search_resumes_from_checkpoint_after_failure(monkeypatch):
+def test_search_resumes_pending_windows_after_failure(monkeypatch):
     monkeypatch.setattr(vox, "PAGE", 2)
-    responses = [{"stop_reason": "finished", "messages": [row(5, "2026-01-20T00:00:00Z"), row(4, "2026-01-15T00:00:00Z")]}, vox.VoxError("boom")]
+    responses = [{"stop_reason": "finished", "messages": [row(5, "2026-01-20T00:00:00Z"), row(4, "2026-01-02T00:00:00Z")]}, vox.VoxError("boom")]
 
     def flaky(path, params):
         item = responses.pop(0)
@@ -67,10 +71,10 @@ def test_search_resumes_from_checkpoint_after_failure(monkeypatch):
     with pytest.raises(vox.VoxError):
         vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
     seen = []
-    monkeypatch.setattr(vox, "_call", lambda path, params: seen.append(params["to_date"]) or {"stop_reason": "finished", "messages": [row(3, "2026-01-02T00:00:00Z")]})
+    monkeypatch.setattr(vox, "_call", lambda path, params: seen.append((params["from_date"], params["to_date"])) or {"stop_reason": "finished", "messages": [row(3, "2026-01-10T00:00:00Z")]})
     vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
-    assert seen == ["2026-01-15T00:00:00Z"]
-    assert [m["id"] for m in raw()] == [5, 4, 3]
+    assert len(seen) == 2  # the two halves left after the failure, not the whole window again
+    assert sorted(m["id"] for m in raw()) == [3, 4, 5]
 
 
 def test_whale_messages_join_the_pool_deduplicated(monkeypatch):
@@ -121,6 +125,13 @@ def test_relay_is_required(monkeypatch):
     monkeypatch.delenv("VOX_RELAY_URL", raising=False)
     with pytest.raises(vox.VoxError, match="VOX_RELAY_URL"):
         vox._call("/search/text", {"query": "вахта"})
+
+
+def test_jev_batches_respect_size_limit(monkeypatch):
+    monkeypatch.setattr(jev, "MAX_BYTES", 2000)
+    unique = {f"t{i}": {"text": "x" * 300} for i in range(10)}
+    chunks = list(jev._chunks(list(unique), unique))
+    assert sum(len(c) for c in chunks) == 10 and all(len(c) <= 2 for c in chunks)
 
 
 def test_jev_filter_dedups_texts_caches_scores_and_samples(monkeypatch):

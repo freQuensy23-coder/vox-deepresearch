@@ -342,6 +342,21 @@ def _normal(text):
     return " ".join((text or "").casefold().split())
 
 
+def _chunks(texts, unique):
+    """Batches within the gateway limits: MAX_ITEMS items and half of MAX_BYTES
+    (the request also carries the questions and JSON overhead per item)."""
+    chunk, size = [], 0
+    for text in texts:
+        item = len(encode(unique[text].get("text") or "")) + 200
+        if chunk and (len(chunk) == MAX_ITEMS or size + item > MAX_BYTES // 2):
+            yield chunk
+            chunk, size = [], 0
+        chunk.append(text)
+        size += item
+    if chunk:
+        yield chunk
+
+
 def _write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -387,8 +402,7 @@ class Jev:
         scores = cache.setdefault(digest, {"instruction": instruction, "scores": {}})["scores"]
         todo = [t for t in unique if hashlib.sha256(t.encode()).hexdigest() not in scores]
         questions = {"relevant": {"type": "noul", "instructions": instruction}}
-        for start in range(0, len(todo), MAX_ITEMS):
-            chunk = todo[start : start + MAX_ITEMS]
+        for chunk in _chunks(todo, unique):
             ids = {hashlib.sha256(t.encode()).hexdigest(): t for t in chunk}
             handle = submit({"items": [{"id": k, "state": unique[t].get("text") or ""} for k, t in ids.items()], "questions": questions})
             while True:
