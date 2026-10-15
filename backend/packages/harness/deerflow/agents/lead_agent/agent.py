@@ -41,6 +41,7 @@ from deerflow.agents.middlewares.configured_extensions import load_configured_ex
 from deerflow.agents.middlewares.loop_detection_middleware import LoopDetectionMiddleware
 from deerflow.agents.middlewares.memory_middleware import MemoryMiddleware
 from deerflow.agents.middlewares.model_length_finish_reason_middleware import ModelLengthFinishReasonMiddleware
+from deerflow.agents.middlewares.recon_watchdog_middleware import ReconWatchdogMiddleware
 from deerflow.agents.middlewares.safety_finish_reason_middleware import SafetyFinishReasonMiddleware
 from deerflow.agents.middlewares.subagent_limit_middleware import SubagentLimitMiddleware
 from deerflow.agents.middlewares.summarization_middleware import DeerFlowSummarizationMiddleware, create_summarization_middleware
@@ -738,6 +739,10 @@ def build_middlewares(
     loop_detection_config = resolved_app_config.loop_detection
     if loop_detection_config.enabled:
         middlewares.append(LoopDetectionMiddleware.from_config(loop_detection_config))
+
+    # ReconWatchdogMiddleware — keep the lead agent sending Vox requests during recon
+    if resolved_app_config.recon_watchdog.enabled:
+        middlewares.append(ReconWatchdogMiddleware.from_config(resolved_app_config.recon_watchdog))
 
     # TokenBudgetMiddleware - enforce per-run token limits
     token_budget_config = resolved_app_config.token_budget

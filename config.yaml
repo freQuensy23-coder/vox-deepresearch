@@ -1316,6 +1316,17 @@ input_polish:
 
 
 # ============================================================================
+# Recon Watchdog
+# ============================================================================
+# After the lead agent's first vox.py search/whale, a reminder is injected
+# whenever idle_seconds pass without a new one. The agent turns it off with
+# stop_recon_phase once the whole market is mapped.
+
+recon_watchdog:
+  enabled: true
+  idle_seconds: 300
+
+# ============================================================================
 # Loop Detection Configuration
 # ============================================================================
 # Detect and interrupt repeated identical tool-call loops.

@@ -36,6 +36,7 @@ from deerflow.config.pii_redaction_config import PiiRedactionConfig
 from deerflow.config.projects_config import ProjectsConfig
 from deerflow.config.prompt_overlay import PromptOverlay
 from deerflow.config.read_before_write_config import ReadBeforeWriteConfig
+from deerflow.config.recon_watchdog_config import ReconWatchdogConfig
 from deerflow.config.reload_boundary import format_field_description
 from deerflow.config.run_events_config import RunEventsConfig
 from deerflow.config.run_ownership_config import RunOwnershipConfig
@@ -316,6 +317,7 @@ class AppConfig(BaseModel):
         ),
     )
     loop_detection: LoopDetectionConfig = Field(default_factory=LoopDetectionConfig, description="Loop detection middleware configuration")
+    recon_watchdog: ReconWatchdogConfig = Field(default_factory=ReconWatchdogConfig, description="Reminds the lead agent to keep sending Vox requests during recon")
     tool_progress: ToolProgressConfig = Field(default_factory=ToolProgressConfig, description="Tool progress state machine middleware configuration")
     verification: VerificationConfig = Field(default_factory=VerificationConfig, description="Subagent result verification (receipts, checklist, judge)")
     read_before_write: ReadBeforeWriteConfig = Field(default_factory=ReadBeforeWriteConfig, description="Read-before-write file gate middleware configuration")
