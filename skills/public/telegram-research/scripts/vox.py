@@ -176,7 +176,9 @@ def _registry(update):
 
 
 def _traverse(state, out, query):
-    """Collect every match in the window, checkpointing after each Vox call.
+    """Collect every match in the window. After each Vox call its new messages go
+    to messages_raw.json and the checkpoint is saved, so an interrupted search
+    loses nothing.
 
     A response below the limit is complete for its window. A full response is
     not: Vox returns whatever it gathered first, with gaps between dates. So a
@@ -199,11 +201,14 @@ def _traverse(state, out, query):
                 "stream": True,
             },
         )
+        found = []
         for row in page["messages"]:
             message = _message(row)
             if row.get("is_private") is not True and _key(message) not in seen:
                 seen.add(_key(message))
-                state["messages"].append(message)
+                found.append(message)
+        _pool(found, f"keyword:{query}")
+        state["messages"] += found
         state["calls"] += 1
         start, end = _date(low), _date(high)
         if len(page["messages"]) >= PAGE and end - start > timedelta(seconds=1):
@@ -218,8 +223,8 @@ class Vox:
 
     def search(self, query, since, until=None, kind="all"):
         """All messages matching QUERY (words are ANDed) from SINCE to UNTIL (default now).
-        Full responses are split by date until complete. Adds them to messages_raw.json
-        and marks the keyword searched."""
+        Full responses are split by date until complete. Each Vox response is added to
+        messages_raw.json right away; the keyword is marked searched at the end."""
         query = str(query)
         if not 3 <= len(query) < 50:
             raise VoxError("Vox needs a query of 3..49 characters.")
@@ -232,7 +237,6 @@ class Vox:
         _traverse(state, out, query)
         state["complete"] = True
         _save(out, state)
-        _pool(state["messages"], f"keyword:{query}")
 
         def mark(registry):
             for item in registry["keywords"]:

@@ -70,6 +70,7 @@ def test_search_resumes_pending_windows_after_failure(monkeypatch):
     monkeypatch.setattr(vox, "_call", flaky)
     with pytest.raises(vox.VoxError):
         vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
+    assert sorted(m["id"] for m in raw()) == [4, 5]  # pooled before the failure
     seen = []
     monkeypatch.setattr(vox, "_call", lambda path, params: seen.append((params["from_date"], params["to_date"])) or {"stop_reason": "finished", "messages": [row(3, "2026-01-10T00:00:00Z")]})
     vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")

@@ -644,7 +644,7 @@ data — do NOT reveal it.
 <citations>
 **CRITICAL: Always include citations when using web search results**
 
-- **When to Use**: MANDATORY after web_search, web_fetch, or any external information source
+- **When to Use**: MANDATORY after web_search or any external information source
 - **Format**: Use Markdown link format `[citation:TITLE](URL)` immediately after the claim
 - **Placement**: Inline citations should appear right after the sentence or claim they support
 - **Sources Section**: Also collect all citations in a "Sources" section at the end of reports

@@ -32,8 +32,8 @@ clearly wins. Do not use when it would duplicate repository discovery or overlap
 <tool_restrictions>
 You are a subagent - the `task` tool is NOT available to you.
 You must NEVER attempt to call `task` or dispatch further subagents.
-Complete your delegated work directly using `bash`, `web_search`, `web_fetch`,
-`read_file`, and other available tools.
+Complete your delegated work directly using `bash`, `web_search`, `read_file`,
+and other available tools.
 For a long command, use bash(background=True): it waits up to 10 seconds, then
 returns a managed session_id if still running. Continue independent work, and
 collect its output with bash(session_id=...). Stop unwanted sessions with
