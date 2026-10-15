@@ -232,6 +232,8 @@ class Vox:
         out = Path(f"vox/search/{_slug(query)}_{_iso(since)[:10]}_{until[:10]}.json")
         if out.exists():
             state = _load(out)
+            # The checkpoint may hold messages a crash kept out of the pool.
+            _pool(state["messages"], f"keyword:{query}")
         else:
             state = {"query": query, "since": _iso(since), "until": until, "kind": kind, "pending": [[_iso(since), until]], "calls": 0, "messages": []}
         _traverse(state, out, query)

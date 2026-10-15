@@ -153,3 +153,12 @@ def test_jev_filter_dedups_texts_caches_scores_and_samples(monkeypatch):
     assert len(submitted) == 1  # scores are cached per instruction
     lines = jev.Jev().sample(n=10).splitlines()
     assert lines[0].startswith("+ 0.90") and lines[1].startswith("- 0.10")
+
+
+def test_resumed_checkpoint_messages_reach_the_pool(monkeypatch):
+    out = Path("vox/search/вахта_2026-01-01_2026-02-01.json")
+    out.parent.mkdir(parents=True)
+    out.write_text(json.dumps({"query": "вахта", "since": "2026-01-01T00:00:00Z", "until": "2026-02-01T00:00:00Z", "kind": "all", "pending": [], "calls": 3, "messages": [vox._message(row(8, "2026-01-05T00:00:00Z"))]}))
+    monkeypatch.setattr(vox, "_call", lambda path, params: pytest.fail("no Vox call for a finished checkpoint"))
+    vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
+    assert [m["id"] for m in raw()] == [8]

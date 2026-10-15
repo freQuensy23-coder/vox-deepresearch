@@ -14,7 +14,7 @@ TERMINAL = {"completed", "timed_out", "cancelled", "failed"}
 OUTPUT_LIMIT = 20000
 # A poll may block this long, so waiting on a long command costs one model turn per
 # ten minutes instead of one per minute.
-POLL_WAIT_LIMIT = 600
+POLL_WAIT_LIMIT = 300
 
 
 def wait_budget(value: float, maximum: float = 10) -> float:
