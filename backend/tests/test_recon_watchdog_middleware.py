@@ -48,3 +48,14 @@ def test_stop_recon_phase_sets_state():
     command = stop_recon_phase_tool.invoke({"type": "tool_call", "name": "stop_recon_phase", "id": "t1", "args": {"reason": "all mapped"}})
     assert command.update["recon_stopped"] is True
     assert isinstance(command.update["messages"][0], ToolMessage)
+
+
+def test_reply_without_tool_calls_cannot_end_the_run_during_recon():
+    clock = Clock()
+    watchdog = ReconWatchdogMiddleware(idle_seconds=300, clock=clock)
+    final = AIMessage(content="Продолжаю рекон.")
+    update = watchdog.after_model({"messages": [final], "recon_last_vox_at": 900.0}, None)
+    assert update["jump_to"] == "model"
+    assert "stop_recon_phase" in update["messages"][0].content
+    assert watchdog.after_model({"messages": [final], "recon_last_vox_at": 900.0, "recon_stopped": True}, None) is None
+    assert watchdog.after_model({"messages": [final]}, None) is None

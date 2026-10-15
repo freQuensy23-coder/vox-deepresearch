@@ -2,15 +2,17 @@
 
 The watchdog starts with the first ``vox.py search`` / ``vox.py whale`` bash
 command of the thread. If no new one follows within ``idle_seconds``, the next
-model call gets a reminder to keep reconning wide. The agent turns the
-watchdog off with ``stop_recon_phase`` once the whole market is mapped.
+model call gets a reminder to keep reconning wide. While recon is on, a reply
+without tool calls does not end the run: it would kill the background searches,
+so the agent is reminded and sent back to work. The agent turns the watchdog off
+with ``stop_recon_phase`` once the whole market is mapped.
 """
 
 import time
 from typing import Annotated, NotRequired
 
 from langchain.agents import AgentState
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain.tools import InjectedToolCallId, tool
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
@@ -25,6 +27,12 @@ NUDGE_TEXT = (
     "Ожидание других команд — не отговорка: запускай vox.py через bash(background=True) "
     "и продолжай. Если фаза рекона полностью завершена, ты замапил ВЕСЬ рынок и просто ждёшь "
     "подагентов или готовишь отчёт — выключи напоминание через stop_recon_phase."
+)
+
+FINISH_TEXT = (
+    "Рекон не выключен, поэтому завершать работу нельзя: конец хода остановит все фоновые "
+    "поиски. Продолжай: запускай новые запросы, проверяй сессии, разбирай собранное. "
+    "Если весь рынок замаплен — сначала вызови stop_recon_phase, потом отвечай."
 )
 
 
@@ -65,11 +73,17 @@ class ReconWatchdogMiddleware(AgentMiddleware[ReconWatchdogState]):
     def from_config(cls, config: ReconWatchdogConfig) -> "ReconWatchdogMiddleware":
         return cls(idle_seconds=config.idle_seconds)
 
+    @hook_config(can_jump_to=["model"])
     def after_model(self, state, runtime):
         messages = state.get("messages") or []
         last = messages[-1] if messages else None
-        if isinstance(last, AIMessage) and any(_is_vox_request(call) for call in last.tool_calls):
+        if not isinstance(last, AIMessage):
+            return None
+        if any(_is_vox_request(call) for call in last.tool_calls):
             return {"recon_last_vox_at": self.clock()}
+        if not last.tool_calls and state.get("recon_last_vox_at") is not None and not state.get("recon_stopped"):
+            nudge = HumanMessage(content=FINISH_TEXT, additional_kwargs={RECON_NUDGE: True})
+            return {"messages": [nudge], "recon_last_vox_at": self.clock(), "jump_to": "model"}
         return None
 
     def before_model(self, state, runtime):
@@ -86,6 +100,7 @@ class ReconWatchdogMiddleware(AgentMiddleware[ReconWatchdogState]):
         # Restart the timer so the reminder repeats only after another idle period.
         return {"messages": [nudge], "recon_last_vox_at": now}
 
+    @hook_config(can_jump_to=["model"])
     async def aafter_model(self, state, runtime):
         return self.after_model(state, runtime)
 
