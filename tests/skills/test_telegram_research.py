@@ -162,3 +162,11 @@ def test_resumed_checkpoint_messages_reach_the_pool(monkeypatch):
     monkeypatch.setattr(vox, "_call", lambda path, params: pytest.fail("no Vox call for a finished checkpoint"))
     vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
     assert [m["id"] for m in raw()] == [8]
+
+
+def test_registry_shows_keyword_yield():
+    vox.Vox().add_keywords("вахта", "межвахта", source="seed")
+    Path("messages_raw.json").write_text(json.dumps({"messages": [{"sources": ["keyword:вахта"]}, {"sources": ["keyword:вахта", "whale:7"]}]}))
+    Path("messages_filtered.json").write_text(json.dumps({"messages": [{"sources": ["keyword:вахта"]}]}))
+    keywords = json.loads(vox.Vox().registry())["keywords"]
+    assert [(k["word"], k["raw"], k["on_topic"]) for k in keywords] == [("вахта", 2, 1), ("межвахта", 0, 0)]

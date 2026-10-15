@@ -14,7 +14,7 @@ Run from the research folder. It holds:
     vox.py authors [--top 50]                       # active authors in messages_filtered.json
     vox.py add_keywords WORD [WORD ...] --source "..."
     vox.py add_whale USER_ID --alias NAME --reason "..."
-    vox.py registry                                 # print registry.json
+    vox.py registry                                 # registry.json with each keyword's yield
 """
 
 import fcntl
@@ -308,8 +308,16 @@ class Vox:
         return f"{len(registry['whales'])} whales"
 
     def registry(self):
-        """Print registry.json."""
-        return json.dumps(_load(REGISTRY, {"keywords": [], "whales": []}), ensure_ascii=False, indent=1)
+        """Print registry.json with each keyword's and whale's yield: messages in
+        messages_raw.json and on-topic ones in messages_filtered.json."""
+        registry = _load(REGISTRY, {"keywords": [], "whales": []})
+        raw = Counter(s for m in _load(RAW, {"messages": []})["messages"] for s in m.get("sources", []))
+        filtered = Counter(s for m in _load(FILTERED, {"messages": []})["messages"] for s in m.get("sources", []))
+        for item in registry["keywords"]:
+            item["raw"], item["on_topic"] = raw[f"keyword:{item['word']}"], filtered[f"keyword:{item['word']}"]
+        for item in registry["whales"]:
+            item["raw"], item["on_topic"] = raw[f"whale:{item['user_id']}"], filtered[f"whale:{item['user_id']}"]
+        return json.dumps(registry, ensure_ascii=False, indent=1)
 
 
 def main():
