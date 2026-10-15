@@ -12,6 +12,9 @@ from typing import Any
 
 TERMINAL = {"completed", "timed_out", "cancelled", "failed"}
 OUTPUT_LIMIT = 20000
+# A poll may block this long, so waiting on a long command costs one model turn per
+# ten minutes instead of one per minute.
+POLL_WAIT_LIMIT = 600
 
 
 def wait_budget(value: float, maximum: float = 10) -> float:
@@ -62,7 +65,7 @@ class CommandSessions:
         return self._poll(sid, entry, max(0.0, wait - (time.monotonic() - started)), False)
 
     def poll(self, sid: str, *, owner: str, wait: float = 0, cancel: bool = False) -> dict:
-        wait = wait_budget(wait, 60)
+        wait = wait_budget(wait, POLL_WAIT_LIMIT)
         with self._lock:
             entry = self._entries[sid]
             if entry.owner != owner:

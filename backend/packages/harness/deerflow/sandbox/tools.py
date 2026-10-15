@@ -2004,7 +2004,7 @@ def bash_tool(runtime: Runtime, command: str = "", description: str = "", backgr
         session_id: Read a previously returned session owned by this agent; leave command empty.
         cancel: Stop the specified session and its command.
         timeout_seconds: Optional total command deadline, distinct from the 10-second yield.
-        wait_seconds: When polling, wait up to 60 seconds if no independent work remains; default 0.
+        wait_seconds: When polling, wait up to 600 seconds if no independent work remains; default 0.
     """
     try:
         if session_id and command or cancel and not session_id:

@@ -19,8 +19,9 @@ from deerflow.client import DeerFlowClient
 from deerflow.runtime.checkpointer.provider import get_checkpointer
 from deerflow.tui.persistence import build_persistence
 
-# Waiting on minute-long Vox searches costs graph steps; a full research run needs many.
-RECURSION_LIMIT = 3000
+# The limit counts graph steps, not model turns: each turn passes ~9 middleware and
+# tool nodes. 30000 steps is ~3300 turns, enough for an hours-long research run.
+RECURSION_LIMIT = 30000
 
 
 def main(user_id, prompt_file, thread_id=None):
