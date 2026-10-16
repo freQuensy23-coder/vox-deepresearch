@@ -1824,9 +1824,12 @@ jev_bridge:
 
 # Jev gateway (jev-gateway/): Jev System One API and durable batches. Keys
 # JEV_GATEWAY_API_KEY and OPENCODE_GO_SUBSCRIPTION_KEY come from .env.
+# The queue lives on local disk: every item commits twice, and a commit on the
+# pod's network /workspace takes ~50 ms (0.3 ms locally), capping batches at ~10/s.
+# A pod restart drops unfinished batches; jev.py scores are cached, rerun filter.
 jev_gateway:
   port: 18791
-  database: backend/.deer-flow/jev-gateway/gateway.sqlite3
+  database: /tmp/jev-gateway/gateway.sqlite3
   cooldown_seconds: 300
   retry_after_max_seconds: 3600
   upstream_timeout_seconds: 120

@@ -78,7 +78,7 @@ The shared HTTPX client is created and closed by lifespan; redirect following an
 | Key | Meaning |
 |---|---|
 | `port` | Loopback port |
-| `database` | Private durable queue database, relative to the repository root |
+| `database` | Private queue database: absolute, or relative to the repository root. Keep it on a local disk: every batch item commits twice |
 | `cooldown_seconds` | Preferred-route local cooldown |
 | `retry_after_max_seconds` | Maximum upstream Retry-After extension; configured cooldown remains the floor |
 | `upstream_timeout_seconds` | HTTPX and total per-attempt deadline |
