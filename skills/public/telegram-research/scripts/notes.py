@@ -66,7 +66,7 @@ class Notes:
         counts = Counter(name for _, name, _ in _notes())
         return "\n".join(f"{counts[name]:>6}  {name}" for name in _verticals())
 
-    def show(self, name, offset=0, max_chars=25000):
+    def show(self, name, offset=0, max_chars=18000):
         """Print the notes of vertical NAME from OFFSET, as many as fit in MAX_CHARS."""
         notes = [f"{note}" for _, vertical, note in _notes() if vertical == name]
         lines, size, position = [], 0, int(offset)

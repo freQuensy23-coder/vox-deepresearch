@@ -1253,7 +1253,8 @@ tool_output:
   exempt_tools:
     - read_file
     - read_file_tool
-  # bash pages of telegram-research read.py / notes.py (25 000 chars) stay inline.
+  # bash pages of telegram-research read.py / notes.py (18 000 chars, under the
+  # 20 000-char command output limit) stay inline.
   tool_overrides:
     bash: 30000
   # Replace a successful write_file call's `content` with a short placeholder
