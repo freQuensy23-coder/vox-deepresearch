@@ -1837,6 +1837,7 @@ jev_gateway:
   queue_limit: 20000
   batch_workers: 64
   retry_interval: 1
+  batch_attempts: 10
   session_id: ""
   model_release_date: ""
 

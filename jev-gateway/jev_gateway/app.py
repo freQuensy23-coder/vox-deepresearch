@@ -34,6 +34,7 @@ class Settings(BaseModel):
     queue_limit: int = Field(default=20000, ge=1)
     batch_workers: int = Field(default=8, ge=1, le=64)
     retry_interval: float = Field(default=1, gt=0)
+    batch_attempts: int = Field(default=10, ge=1, le=100)
     session_id: str = ""
     model_release_date: str = ""
 

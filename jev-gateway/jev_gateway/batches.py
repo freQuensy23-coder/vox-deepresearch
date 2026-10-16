@@ -134,12 +134,22 @@ class BatchRunner:
         if not await self.store.call("is_running", batch_id, position):
             return
         request = SystemOneRequest.model_validate_json(item["body"])
-        try:
-            response = await self.router.evaluate(request)
-        except GatewayError as error:
-            await self.store.call("finish", batch_id, position, error.status, None, ERROR["error"])
-        else:
-            await self.store.call("finish", batch_id, position, 200, response, None)
+        for attempt in range(self.settings.batch_attempts):
+            try:
+                response = await self.router.evaluate(request)
+            except GatewayError as error:
+                transient = error.status == 429 or error.status >= 500
+                if not transient or attempt == self.settings.batch_attempts - 1:
+                    await self.store.call("finish", batch_id, position, error.status, None, ERROR["error"])
+                    return
+                # Rate limits and upstream failures are retried by the same worker, so a
+                # saturated upstream slows the batch down instead of failing its items.
+                await asyncio.sleep(min(self.settings.retry_interval * 2**attempt, 60))
+                if not await self.store.call("is_running", batch_id, position):
+                    return
+            else:
+                await self.store.call("finish", batch_id, position, 200, response, None)
+                return
 
     async def worker(self):
         while not self.stopping:

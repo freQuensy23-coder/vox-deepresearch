@@ -267,6 +267,22 @@ async def test_batch_switches_to_paid_at_once_and_back_to_free_after_probe(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_batch_retries_rate_limited_items_instead_of_failing_them(tmp_path):
+    calls = []
+    def handler(request):
+        body = json.loads(request.content)
+        calls.append(body["model"])
+        if body["model"].endswith("free") or calls.count("jev-1.13") <= 2:
+            return httpx.Response(429)
+        return httpx.Response(200, json=answer(body))
+    async with service(tmp_path, handler) as (client, app):
+        created = (await client.post("/v1/batches", json=batch(1, concurrency=1))).json()
+        final = await completed(client, created["id"])
+        assert final["completed"] == 1 and final["failed"] == 0
+        assert calls.count("jev-1.13") == 3
+
+
+@pytest.mark.asyncio
 async def test_batch_cancel_and_queue_bound(tmp_path):
     calls = []
     entered = asyncio.Event()

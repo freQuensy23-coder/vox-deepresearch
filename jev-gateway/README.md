@@ -88,7 +88,8 @@ The shared HTTPX client is created and closed by lifespan; redirect following an
 | `batch_max_items` | Item cap per batch |
 | `queue_limit` | Maximum queued/running items across batches |
 | `batch_workers` | Fixed batch worker count |
-| `retry_interval` | Batch poll/requeue interval in seconds |
+| `retry_interval` | Batch poll interval and first retry pause in seconds |
+| `batch_attempts` | Attempts per batch item on 429/5xx, pause doubling from `retry_interval` up to 60 s |
 | `session_id` | Explicit stable upstream session ID (empty = generated per process) |
 | `model_release_date` | Verified metadata date, if known |
 
