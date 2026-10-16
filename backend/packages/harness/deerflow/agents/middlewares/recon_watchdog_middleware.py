@@ -25,14 +25,15 @@ NUDGE_TEXT = (
     "Слышь, почему ты не реконишь? Больше {minutes} мин без новых запросов к Vox. "
     "Надо слать запросы постоянно и реконить вширь: новые слова, синонимы, жаргон, киты. "
     "Ожидание других команд — не отговорка: запускай vox.py через bash(background=True) "
-    "и продолжай. Если фаза рекона полностью завершена, ты замапил ВЕСЬ рынок и просто ждёшь "
-    "подагентов или готовишь отчёт — выключи напоминание через stop_recon_phase."
+    "и продолжай. Если фаза рекона полностью завершена — фактуры хватает для ответа на каждую часть "
+    "вопроса пользователя и новые круги не дают новых групп и слов — выключи напоминание "
+    "через stop_recon_phase."
 )
 
 FINISH_TEXT = (
     "Рекон не выключен, поэтому завершать работу нельзя: конец хода остановит все фоновые "
     "поиски. Продолжай: запускай новые запросы, проверяй сессии, разбирай собранное. "
-    "Если весь рынок замаплен — сначала вызови stop_recon_phase, потом отвечай."
+    "Если фактуры хватает для ответа и новых групп и слов нет — сначала вызови stop_recon_phase, потом отвечай."
 )
 
 
@@ -51,11 +52,11 @@ def _is_vox_request(call) -> bool:
 @tool("stop_recon_phase", parse_docstring=True)
 def stop_recon_phase_tool(reason: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     """Turn off the reminder to keep sending Vox requests. Call it only when the
-    recon phase is fully done: the WHOLE market is mapped and you are only waiting
-    for subagents or writing the report.
+    recon phase is fully done: the collected messages answer every part of the
+    user's question and the last round found no new groups, keywords or whales.
 
     Args:
-        reason: Why recon is complete: what was covered and why new queries add nothing.
+        reason: Why recon is complete: which parts of the question the data answers and why new queries add nothing.
     """
     return Command(update={"recon_stopped": True, "messages": [ToolMessage(f"Recon phase stopped: {reason}", tool_call_id=tool_call_id)]})
 

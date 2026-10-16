@@ -22,6 +22,8 @@ def load(name):
 
 vox = load("vox")
 jev = load("jev")
+read = load("read")
+facts = load("facts")
 pool = load("pool")
 
 
@@ -191,3 +193,52 @@ def test_registry_shows_keyword_yield():
     Path("messages_filtered.json").write_text(json.dumps({"messages": [{"sources": ["keyword:вахта"]}]}))
     keywords = json.loads(vox.Vox().registry())["keywords"]
     assert [(k["word"], k["raw"], k["on_topic"]) for k in keywords] == [("вахта", 2, 1), ("межвахта", 0, 0)]
+
+
+def filtered_file(messages, **meta):
+    Path("messages_filtered.json").write_text(json.dumps({"instruction": "q", "threshold": 0.5, "unique_texts": len(messages), **meta, "messages": messages}))
+
+
+def fm(mid, text, group=-1001, date="2026-03-01", duplicates=0, score=0.9):
+    return {**row(mid, date, group=group, text=text), "group_name": f"Chat {group}", "group_alias": f"c{abs(group)}", "message_id": mid, "duplicates": duplicates, "jev_score": score, "sources": []}
+
+
+def test_read_collapses_near_duplicates_and_filters():
+    filtered_file([
+        fm(1, "Вахта в Сургуте 80000 рублей, звоните +7 900 111 22 33"),
+        fm(2, "вахта в сургуте 80000 рублей, звоните +7 900 999 88 77", group=-2, date="2026-03-05", duplicates=3),
+        fm(3, "Кормят нормально, жильё в вагончике"),
+    ])
+    out = read.read(grep="вахт")
+    assert "×5 в 2 чатах" in out and "https://t.me/g/1" in out and "Кормят" not in out
+    assert "-- 1–1 of 1" in out
+    assert read.read(count=True).splitlines()[0].startswith("2 entries (3 messages")
+    assert "#2" not in read.read(limit=1) and "next page: --offset 1" in read.read(limit=1)
+    assert "Кормят" not in read.read(since="2026-03-05") and "Chat -2" not in read.read(group="Chat -1001")
+
+
+def test_jev_subset_scores_only_the_vertical_and_sample_reads_it(monkeypatch):
+    filtered_file([fm(1, "Жильё в вагончике"), fm(2, "Ставка 80000"), fm(3, "Ставка 90000")])
+    submitted = []
+    monkeypatch.setattr(jev, "submit", lambda data: submitted.append(data) or {"id": "batch_x", "texts": {i["id"]: i["state"] for i in data["items"]}})
+    monkeypatch.setattr(jev, "collect", lambda handle: {"complete": True, "results": [{"custom_id": k, "response": {"answers": {"relevant": {"noul": 0.8 if "Ставка" in t else 0.2}}}} for k, t in handle["texts"].items()]})
+    jev.Jev().subset("Про деньги?", name="pay")
+    accepted = json.loads(Path("verticals/pay/accepted.json").read_text())["messages"]
+    assert [m["message_id"] for m in accepted] == [2, 3] and accepted[0]["jev_score"] == 0.8
+    jev.Jev().subset("Про деньги?", name="pay")
+    assert len(submitted) == 1  # cached per vertical
+    assert [m["message_id"] for m in json.loads(Path("messages_filtered.json").read_text())["messages"]] == [1, 2, 3]
+    assert jev.Jev().sample(n=10, vertical="pay").splitlines()[0].startswith("+ 0.80")
+    assert "Ставка 80000" in read.read(vertical="pay") and "Жильё" in read.read(vertical="pay", rejected=True)
+
+
+def test_facts_lists_every_group_with_links_and_counts():
+    put([{**row(i, "2026-03-0%d" % i, group=-1 - i % 2, text=f"t{i} https://hh.ru/v{i} @boss_ivan +7 900 111 22 3{i}"), "sources": ["keyword:вахта"]} for i in range(1, 5)])
+    filtered_file([fm(1, "Вахта https://hh.ru/v1 @boss_ivan +7 900 111 22 31", group=-2, duplicates=2), fm(2, "Ставка t.me/job_chat", group=-1), fm(3, "Ещё про вахту", group=-2)], unique_texts=4)
+    Path("registry.json").write_text(json.dumps({"keywords": [{"word": "вахта", "status": "searched"}, {"word": "смена", "status": "todo"}], "whales": []}))
+    text = facts.facts()
+    assert "| Групп в пуле / по теме | 2 / 2 |" in text and "| Ключевых слов: найдено / всего | 1 / 2 |" in text
+    assert "| 1 | Chat -2 | https://t.me/g | 2 | 4 | 2 |" in text
+    assert "| Уникальных @-контактов | 1 |" in text and "hh.ru | 1" in text
+    assert "+7 900" not in text and "@boss_ivan" not in text
+    assert facts.facts(out="report/facts.md").endswith("2 groups") and Path("report/facts.md").exists()
