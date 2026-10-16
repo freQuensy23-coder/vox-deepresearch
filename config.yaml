@@ -1846,7 +1846,7 @@ jev_gateway:
   model_release_date: ""
 
 subagent_runtime:
-  max_running: 32
+  max_running: 64                # also the most task calls per turn: all reading chunks start at once
   max_queued: 1000
   admission_policy: queue       # queue or reject when all slots are occupied
   queue_timeout_seconds: 0       # no queue deadline; cancellation still works
