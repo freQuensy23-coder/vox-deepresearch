@@ -1,13 +1,16 @@
 """Compact reader for the filtered messages: for subagents that read thousands of messages.
 
-    read.py --grep 'вахт|смен' --limit 50          # regex like rg, case-insensitive
+    read.py --grep 'вахт|смен'                     # regex like rg, case-insensitive
     read.py --count --grep 'билет|дорога'          # only how many match, per chat
-    read.py --vertical NAME [--rejected]           # output of `jev.py subset`
-    read.py --offset 100 --limit 100               # next page
+    read.py --chunks 300                           # split the whole selection into reading chunks
+    read.py --offset 600 --end 900                 # read one chunk, page by page
+    read.py --offset 100                           # next page
 
 Reads messages_filtered.json (or --file). Near-identical texts are shown once
 with their number of copies: the same advert posted in many chats, or with a
-changed phone number, is one entry.
+changed phone number, is one entry. A page holds as many entries as fit in
+MAX_CHARS, so it is never cut by the tool output limit; the last line says
+where the next page starts.
 """
 
 import json
@@ -64,28 +67,41 @@ def render(m, number, width):
     return f"{head}\n{body}\n  {m.get('message_url')}"
 
 
-def read(file=None, vertical=None, rejected=False, grep=None, group=None, since=None, until=None, offset=0, limit=100, width=100, count=False):
+def read(file=None, grep=None, group=None, since=None, until=None, offset=0, end=None, max_chars=9000, width=100, count=False, chunks=None):
     """Print the messages that match, one block each: number, date, chat, author, copies, text, link.
 
     FILE: JSON in the messages_filtered.json format (default messages_filtered.json).
-    VERTICAL, REJECTED: read verticals/VERTICAL/accepted.json (rejected.json with REJECTED).
     GREP: regex on the text. GROUP: substring of the chat name or alias.
-    SINCE, UNTIL: dates YYYY-MM-DD. OFFSET, LIMIT: page of the result, oldest first.
+    SINCE, UNTIL: dates YYYY-MM-DD. OFFSET, END: entries [OFFSET, END), oldest first.
+    MAX_CHARS: page size; keep it below the tool output limit.
     COUNT: print only the number of entries and their split by chat.
+    CHUNKS: print the ranges that split all entries into chunks of CHUNKS entries.
     """
-    if vertical:
-        file = Path("verticals") / vertical / ("rejected.json" if rejected else "accepted.json")
     messages = json.loads(Path(file or FILTERED).read_text())["messages"]
     found = collapse(select(messages, grep, group, since, until))
     if count:
         by_chat = Counter(m.get("group_name") or m.get("group_alias") or str(m.get("group_id")) for m in found)
         head = f"{len(found)} entries ({len(messages)} messages before collapsing near-duplicates), {len(by_chat)} chats"
         return "\n".join([head] + [f"{n:>6}  {name}" for name, n in by_chat.most_common(30)])
-    offset, limit = int(offset), int(limit)
-    page = found[offset : offset + limit]
-    blocks = [render(m, offset + i + 1, width) for i, m in enumerate(page)]
-    end = offset + len(page)
-    blocks.append(f"-- {offset + 1 if page else 0}–{end} of {len(found)}" + (f"; next page: --offset {end}" if end < len(found) else ""))
+    if chunks:
+        size = int(chunks)
+        return "\n".join(f"--offset {start} --end {min(start + size, len(found))}" for start in range(0, len(found), size))
+    offset = int(offset)
+    stop = min(int(end), len(found)) if end is not None else len(found)
+    blocks, size, position = [], 0, offset
+    while position < stop:
+        block = render(found[position], position + 1, width)
+        if blocks and size + len(block) > int(max_chars):
+            break
+        blocks.append(block)
+        size += len(block) + 2
+        position += 1
+    tail = f"-- {offset + 1 if blocks else 0}–{position} of {len(found)}"
+    if position < stop:
+        tail += f"; next page: --offset {position}" + (f" --end {stop}" if end is not None else "")
+    elif end is not None:
+        tail += f"; range up to {stop} read to the end"
+    blocks.append(tail)
     return "\n\n".join(blocks)
 
 

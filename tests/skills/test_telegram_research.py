@@ -23,6 +23,7 @@ def load(name):
 vox = load("vox")
 jev = load("jev")
 read = load("read")
+notes = load("notes")
 facts = load("facts")
 pool = load("pool")
 
@@ -220,23 +221,32 @@ def test_read_collapses_near_duplicates_and_filters():
     assert "×5 в 2 чатах" in out and "https://t.me/g/1" in out and "Кормят" not in out
     assert "-- 1–1 of 1" in out
     assert read.read(count=True).splitlines()[0].startswith("2 entries (3 messages")
-    assert "#2" not in read.read(limit=1) and "next page: --offset 1" in read.read(limit=1)
     assert "Кормят" not in read.read(since="2026-03-05") and "Chat -2" not in read.read(group="Chat -1001")
 
 
-def test_jev_subset_scores_only_the_vertical_and_sample_reads_it(monkeypatch):
-    filtered_file([fm(1, "Жильё в вагончике"), fm(2, "Ставка 80000"), fm(3, "Ставка 90000")])
-    submitted = []
-    monkeypatch.setattr(jev, "submit", lambda data: submitted.append(data) or {"id": "batch_x", "texts": {i["id"]: i["state"] for i in data["items"]}})
-    monkeypatch.setattr(jev, "collect", lambda handle: {"complete": True, "results": [{"custom_id": k, "response": {"answers": {"relevant": {"noul": 0.8 if "Ставка" in t else 0.2}}}} for k, t in handle["texts"].items()]})
-    jev.Jev().subset("Про деньги?", name="pay")
-    accepted = json.loads(Path("verticals/pay/accepted.json").read_text())["messages"]
-    assert [m["message_id"] for m in accepted] == [2, 3] and accepted[0]["jev_score"] == 0.8
-    jev.Jev().subset("Про деньги?", name="pay")
-    assert len(submitted) == 1  # cached per vertical
-    assert [m["message_id"] for m in json.loads(Path("messages_filtered.json").read_text())["messages"]] == [1, 2, 3]
-    assert jev.Jev().sample(n=10, vertical="pay").splitlines()[0].startswith("+ 0.80")
-    assert "Ставка 80000" in read.read(vertical="pay") and "Жильё" in read.read(vertical="pay", rejected=True)
+def test_read_pages_fit_the_tool_output_limit_and_chunks_cover_everything():
+    filtered_file([fm(i, "слово" + "я" * i + " " + "текст " * 150, date=f"2026-03-{i:02d}") for i in range(1, 21)])
+    first = read.read(max_chars=3000)
+    assert len(first) < 3500 and "next page: --offset" in first
+    nxt = int(first.rsplit("--offset ", 1)[1])
+    assert f"#{nxt + 1} " in read.read(offset=nxt, max_chars=3000)
+    assert read.read(chunks=8).splitlines() == ["--offset 0 --end 8", "--offset 8 --end 16", "--offset 16 --end 20"]
+    tail = read.read(offset=16, end=20, max_chars=100000)
+    assert "#17 " in tail and "#20 " in tail and "range up to 20 read to the end" in tail
+
+
+def test_notes_status_count_and_show():
+    filtered_file([fm(i, "текст" + "я" * i) for i in range(1, 6)])
+    Path("verticals.md").write_text("01-pay | ставки?\n02-food | питание?\n")
+    Path("notes").mkdir()
+    Path("notes/0.md").write_text("01-pay | 80 тыс за смену | https://t.me/g/1\n02-food | кормят трижды | https://t.me/g/2\n# done 0-3\n")
+    Path("notes/3.md").write_text("01-pay | 90 тыс | https://t.me/g/4\nmisc | что-то | https://t.me/g/5\n")
+    status = notes.Notes().status(size=3)
+    assert status.splitlines()[0] == "1 of 2 chunks done (5 entries)"
+    assert "not done: --offset 3 --end 5" in status and "unknown vertical 'misc': 1 notes" in status
+    assert notes.Notes().count().splitlines() == ["     2  01-pay", "     1  02-food"]
+    shown = notes.Notes().show("01-pay")
+    assert "1. 80 тыс за смену | https://t.me/g/1" in shown and "2. 90 тыс" in shown and "-- 1–2 of 2" in shown
 
 
 def test_facts_lists_every_group_with_links_and_counts():

@@ -433,36 +433,11 @@ class Jev:
         print(f"{raw} raw, {len(unique)} unique, {len(relevant)} relevant, {len(rejected)} rejected ({meta['unscored']} unscored)", file=sys.stderr)
         return str(FILTERED.resolve())
 
-    def subset(self, instruction, name, threshold=0.5, poll=10):
-        """Narrow messages_filtered.json to one vertical: keep messages that match
-        INSTRUCTION (a yes/no question about the vertical). Writes
-        verticals/NAME/accepted.json and rejected.json in the messages_filtered.json
-        format with the vertical's score in `jev_score`. Scores are cached per NAME."""
-        base = json.loads(FILTERED.read_text())
-        unique = {_normal(m.get("text")): m for m in base["messages"]}
-        folder = Path("verticals") / name
-        cache_path = folder / "scores.json"
-        cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
-        digest = hashlib.sha256(instruction.encode()).hexdigest()
-        scores = cache.setdefault(digest, {"instruction": instruction, "scores": {}})["scores"]
-        _score(unique, instruction, scores, lambda: _write(cache_path, cache), poll)
-        accepted, rejected = [], []
-        for text, m in unique.items():
-            score = scores.get(hashlib.sha256(text.encode()).hexdigest())
-            (accepted if score is not None and score >= threshold else rejected).append({**m, "jev_score": score})
-        meta = {"vertical": name, "instruction": instruction, "threshold": threshold, "of": len(unique)}
-        _write(folder / "accepted.json", {**meta, "messages": accepted})
-        _write(folder / "rejected.json", {**meta, "messages": rejected})
-        print(f"{name}: {len(accepted)} of {len(unique)} match, {len(rejected)} rejected", file=sys.stderr)
-        return str(folder.resolve())
-
-    def sample(self, n=100, width=300, vertical=None):
+    def sample(self, n=100, width=300):
         """Print up to N messages for one-pass review: accepted with the lowest scores
-        and rejected with the highest, i.e. those nearest the threshold. With
-        VERTICAL, review the output of `subset` for that vertical instead."""
-        accepted_path, rejected_path = (Path("verticals") / vertical / "accepted.json", Path("verticals") / vertical / "rejected.json") if vertical else (FILTERED, REJECTED)
-        accepted = sorted(json.loads(accepted_path.read_text())["messages"], key=lambda m: m["jev_score"])
-        rejected = sorted((m for m in json.loads(rejected_path.read_text())["messages"] if m["jev_score"] is not None), key=lambda m: -m["jev_score"])
+        and rejected with the highest, i.e. those nearest the threshold."""
+        accepted = sorted(json.loads(FILTERED.read_text())["messages"], key=lambda m: m["jev_score"])
+        rejected = sorted((m for m in json.loads(REJECTED.read_text())["messages"] if m["jev_score"] is not None), key=lambda m: -m["jev_score"])
         half = int(n) // 2
         rows = [("+", m) for m in accepted[:half]] + [("-", m) for m in rejected[: int(n) - min(half, len(accepted))]]
         lines = [f"{sign} {m['jev_score']:.2f} {m.get('group_alias') or m.get('group_id')}: {' '.join((m.get('text') or '').split())[: int(width)]}" for sign, m in rows]
