@@ -82,8 +82,7 @@ def test_batch_preserves_agent_policy_and_exceeds_old_client_caps():
     [
         None,
         {},
-        {"allow_paid": True, "concurrency": 32},
-        {"allow_paid": False, "free_wait_seconds": 0},
+        {"concurrency": 32},
     ],
 )
 def test_batch_policy_forwarding_preserves_gateway_defaults_and_agent_values(policy):

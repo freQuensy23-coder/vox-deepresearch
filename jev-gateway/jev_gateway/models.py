@@ -72,9 +72,7 @@ class SystemOneRequest(RequestModel):
 
 class BatchPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
-    free_wait_seconds: float = Field(default=600, ge=0, le=86400)
-    concurrency: int = Field(default=4, ge=1, le=64)
-    allow_paid: bool = True
+    concurrency: int = Field(default=64, ge=1, le=128)
 
 
 class BatchItem(BaseModel):

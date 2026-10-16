@@ -57,7 +57,7 @@ with httpx.Client(base_url=ROOT, timeout=180, trust_env=False) as http:
         assert response.nouls["urgent"].noul > 0.8
         assert response.choices["team"].choice == "engineering"
         assert response.scores["severity"].score > 1.5
-    submit = http.post("/v1/batches", headers=headers, json={"requests": [{"custom_id": str(i), "body": body} for i in range(3)], "policy": {"free_wait_seconds": 600, "concurrency": 2, "allow_paid": True}})
+    submit = http.post("/v1/batches", headers=headers, json={"requests": [{"custom_id": str(i), "body": body} for i in range(3)], "policy": {"concurrency": 2}})
     assert submit.status_code == 202, submit.text
     batch_id = submit.json()["id"]
     until = time.monotonic() + 180

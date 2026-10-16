@@ -72,7 +72,10 @@ class Router:
         except (httpx.HTTPError, ValueError, TypeError, RecursionError, UnicodeError, OverflowError):
             raise GatewayError(502) from None
 
-    async def evaluate(self, request, allow_paid=True):
+    async def evaluate(self, request):
+        """Free route while it answers. Its first failure switches every call to the paid
+        route at once; after the cooldown one call probes the free route, and its success
+        switches everything back."""
         async with self.semaphore:
             async with self.lock:
                 now = self.clock()
@@ -97,7 +100,7 @@ class Router:
                         if error.status not in {400, 422}:
                             self.generation += 1
                             self.cool_until = max(self.cool_until, self.clock() + self.delay(error.retry_after))
-                    if error.status in {400, 422} or not allow_paid:
+                    if error.status in {400, 422}:
                         raise
                 else:
                     if probe:
@@ -106,6 +109,4 @@ class Router:
                             if generation == self.generation:
                                 self.cool_until = 0
                     return result
-            if not allow_paid:
-                raise GatewayError(503)
             return await self.attempt(request, "jev-1.13")

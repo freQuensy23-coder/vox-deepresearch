@@ -34,8 +34,8 @@ class Store:
             PRAGMA foreign_keys=ON;
             PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS batches(id TEXT PRIMARY KEY, created REAL NOT NULL, cancelled INTEGER NOT NULL DEFAULT 0, policy TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS items(batch_id TEXT NOT NULL REFERENCES batches(id), position INTEGER NOT NULL, custom_id TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, started REAL, due REAL NOT NULL DEFAULT 0, status_code INTEGER, response TEXT, error TEXT, PRIMARY KEY(batch_id,position), UNIQUE(batch_id,custom_id));
-            CREATE INDEX IF NOT EXISTS items_ready ON items(status,due);
+            CREATE TABLE IF NOT EXISTS items(batch_id TEXT NOT NULL REFERENCES batches(id), position INTEGER NOT NULL, custom_id TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, started REAL, status_code INTEGER, response TEXT, error TEXT, PRIMARY KEY(batch_id,position), UNIQUE(batch_id,custom_id));
+            CREATE INDEX IF NOT EXISTS items_status ON items(status);
         """)
         with self.db:
             self.db.execute("UPDATE items SET status='queued' WHERE status='running'")
@@ -70,7 +70,7 @@ class Store:
     def claim(self):
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            rows = self.db.execute("SELECT i.batch_id,i.position,b.policy FROM items i JOIN batches b ON i.batch_id=b.id WHERE i.status='queued' AND i.due<=? AND b.cancelled=0 AND (SELECT COUNT(*) FROM items active WHERE active.batch_id=i.batch_id AND active.status='running') < json_extract(b.policy,'$.concurrency') ORDER BY i.due,b.created,i.position LIMIT 1", (time.time(),)).fetchone()
+            rows = self.db.execute("SELECT i.batch_id,i.position,b.policy FROM items i JOIN batches b ON i.batch_id=b.id WHERE i.status='queued' AND b.cancelled=0 AND (SELECT COUNT(*) FROM items active WHERE active.batch_id=i.batch_id AND active.status='running') < json_extract(b.policy,'$.concurrency') ORDER BY b.created,i.position LIMIT 1").fetchone()
             if rows is None:
                 return None
             self.db.execute("UPDATE items SET status='running',started=COALESCE(started,?) WHERE batch_id=? AND position=?", (time.time(), rows["batch_id"], rows["position"]))
@@ -85,10 +85,6 @@ class Store:
     def finish(self, batch_id, position, status_code, response, error):
         with self.db:
             self.db.execute("UPDATE items SET status=?,status_code=?,response=?,error=? WHERE batch_id=? AND position=? AND status='running'", ("completed" if status_code == 200 else "failed", status_code, json.dumps(response) if response is not None else None, json.dumps(error) if error is not None else None, batch_id, position))
-
-    def retry(self, batch_id, position, due):
-        with self.db:
-            self.db.execute("UPDATE items SET status='queued',due=? WHERE batch_id=? AND position=? AND status='running'", (due, batch_id, position))
 
     def cancel(self, batch_id):
         self.metadata(batch_id)
@@ -137,20 +133,11 @@ class BatchRunner:
         batch_id, position = item["batch_id"], item["position"]
         if not await self.store.call("is_running", batch_id, position):
             return
-        policy = item["policy"]
-        deadline = item["started"] + policy["free_wait_seconds"]
-        allow_paid = policy["allow_paid"] and time.time() >= deadline
         request = SystemOneRequest.model_validate_json(item["body"])
         try:
-            response = await self.router.evaluate(request, allow_paid=allow_paid)
+            response = await self.router.evaluate(request)
         except GatewayError as error:
-            if error.status in {400, 422} or allow_paid:
-                await self.store.call("finish", batch_id, position, error.status, None, ERROR["error"])
-            else:
-                due = time.time() + self.settings.retry_interval
-                if policy["allow_paid"]:
-                    due = min(due, deadline)
-                await self.store.call("retry", batch_id, position, due)
+            await self.store.call("finish", batch_id, position, error.status, None, ERROR["error"])
         else:
             await self.store.call("finish", batch_id, position, 200, response, None)
 

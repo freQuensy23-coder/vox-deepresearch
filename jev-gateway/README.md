@@ -48,18 +48,18 @@ The authoritative request-schema snapshot supplied for this implementation is `t
       }
     }
   ],
-  "policy": {"free_wait_seconds": 600, "concurrency": 4, "allow_paid": true}
+  "policy": {"concurrency": 64}
 }
 ```
 
-- `POST /v1/batches`: returns 202 and `{id,status,total,completed,failed,cancelled,pending,created_at,policy}`. All requests validate before a single transactional insertion. `custom_id` is unique within the batch, nonempty and at most 256 characters. Batch-envelope unknown fields are rejected. Default policy is the one above; `free_wait_seconds` supports 0–86400 seconds, concurrency 1–64.
+- `POST /v1/batches`: returns 202 and `{id,status,total,completed,failed,cancelled,pending,created_at,policy}`. All requests validate before a single transactional insertion. `custom_id` is unique within the batch, nonempty and at most 256 characters. Batch-envelope unknown fields are rejected. Default policy is the one above; concurrency 1–128.
 - `GET /v1/batches/{id}`: same metadata; status is `in_progress`, `completed`, or `cancelled`. `completed` counts successful items; `failed` counts terminal failures. A finished batch with failed items still has status `completed`.
 - `GET /v1/batches/{id}/results?offset=0&limit=100`: `{results:[{custom_id,status_code,response,error}],offset,limit,has_more,total}`. Limit 1–1000. **All item slots** are returned in original request order, including pending slots with null status/response/error. Total is always the complete item count, so page positions do not shift while items finish. Successful slots contain a normal System One response; failed/cancelled slots contain a generic error. Invalid offsets/limits return 422; unknown IDs return 404.
 - `DELETE /v1/batches/{id}`: durable cancellation, stops further submissions and cancels local in-flight tasks. Completed/failed results are retained; unfinished slots get status 499 and a cancellation error. A request already submitted upstream cannot be recalled, and may still complete or incur a charge there.
 
-Each item's wait starts at its **first processing attempt**, not batch admission. During the wait only the preferred route is attempted; failures requeue without occupying a worker. After the deadline an item permits ordinary fallback. `free_wait_seconds:0` permits immediate fallback. `allow_paid:false` waits/retries indefinitely without submitting to the alternate route, except terminal 400/422 validation errors. Online System One calls do not wait for batch deadlines.
+Batch items route exactly like online calls (see Operator routing): nothing waits for the free route.
 
-Requests, ordering, first-attempt timestamps, policy, cancellation and terminal results persist in SQLite. Startup recovers `running` items to `queued`; completed items are not rerun. Recovery is **at least once**: a crash after upstream completion but before the database commit may repeat that item and its cost. Fixed worker tasks avoid one task per queued item. Global and per-batch concurrency are both enforced. Pending queue and batch admission are bounded; 429 indicates full queue. Completed data is retained indefinitely; arrange operator retention/backups according to data sensitivity and disk capacity.
+Requests, ordering, policy, cancellation and terminal results persist in SQLite. Startup recovers `running` items to `queued`; completed items are not rerun. Recovery is **at least once**: a crash after upstream completion but before the database commit may repeat that item and its cost. Fixed worker tasks avoid one task per queued item. Global and per-batch concurrency are both enforced. Pending queue and batch admission are bounded; 429 indicates full queue. Completed data is retained indefinitely; arrange operator retention/backups according to data sensitivity and disk capacity.
 
 SQLite operations run off the event loop. Database directory is 0700 and database file 0600. A process-level lock rejects a second owner of the same database. The database stores requests/results, not gateway credentials; it is not encrypted at rest. Use a dedicated private directory.
 
@@ -67,7 +67,7 @@ SQLite operations run off the event loop. Database directory is 0700 and databas
 
 The upstream endpoint is fixed to `https://opencode.ai/zen/v1/systemone`. Route order is `jev-1.13-free`, then `jev-1.13`; those identifiers never appear in API responses. The gateway sends an honest `User-Agent: Jev-Local-Gateway/1.0` and a stable `x-opencode-session` identifier. Set an explicit session ID to keep it stable across process restarts; otherwise it is generated once per startup.
 
-Every preferred-route failure other than 400/422, including auth errors, malformed 200s, network failures and timeouts, enters a local cooldown. Default cooldown is 300 seconds. Online calls during cooldown go directly to the alternate route. On expiration exactly one half-open preferred-route probe is admitted, without holding the routing lock during I/O. Other online calls use the alternate route and waiting batches remain queued. A successful probe restores the preferred route; failure extends cooldown. Retry-After numeric/date values are bounded; invalid/non-finite headers are ignored. Cooldown is a local retry decision, **not a claim of upstream quota reset**, and is in-memory only across restart.
+Every preferred-route failure other than 400/422, including auth errors, malformed 200s, network failures and timeouts, enters a local cooldown. Default cooldown is 300 seconds. Every call during cooldown, online or batch, goes directly to the alternate route. On expiration exactly one half-open preferred-route probe is admitted, without holding the routing lock during I/O; other calls keep using the alternate route. A successful probe restores the preferred route; failure extends cooldown. Retry-After numeric/date values are bounded; invalid/non-finite headers are ignored. Cooldown is a local retry decision, **not a claim of upstream quota reset**, and is in-memory only across restart.
 
 The shared HTTPX client is created and closed by lifespan; redirect following and environment proxies are disabled. Both HTTPX timeouts and a total per-attempt deadline apply. Gateway code never logs request bodies or keys; the bundled launcher disables access logs.
 

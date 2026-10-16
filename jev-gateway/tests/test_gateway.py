@@ -216,7 +216,7 @@ async def completed(client, batch_id):
 
 
 def batch(count=3, **policy):
-    return {"requests": [{"custom_id": str(i), "body": copy.deepcopy(BODY)} for i in range(count)], "policy": dict(free_wait_seconds=0, concurrency=2, allow_paid=True, **policy)}
+    return {"requests": [{"custom_id": str(i), "body": copy.deepcopy(BODY)} for i in range(count)], "policy": {"concurrency": 2, **policy}}
 
 
 @pytest.mark.asyncio
@@ -243,42 +243,45 @@ async def test_batches_pagination_duplicates_bounds_permissions(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_batch_waits_free_before_paid(tmp_path):
+async def test_batch_switches_to_paid_at_once_and_back_to_free_after_probe(tmp_path):
     calls = []
+    free_down = {"value": True}
     def handler(request):
         body = json.loads(request.content)
-        calls.append((asyncio.get_running_loop().time(), body["model"]))
-        if body["model"].endswith("free"):
+        calls.append(body["model"])
+        if body["model"].endswith("free") and free_down["value"]:
             return httpx.Response(429)
         return httpx.Response(200, json=answer(body))
-    async with service(tmp_path, handler, cooldown_seconds=0.03) as (client, app):
+    async with service(tmp_path, handler, cooldown_seconds=0.2) as (client, app):
         start = asyncio.get_running_loop().time()
-        payload = batch(1)
-        payload["policy"]["free_wait_seconds"] = 0.10
-        created = (await client.post("/v1/batches", json=payload)).json()
-        assert (await completed(client, created["id"]))["completed"] == 1
-        paid = [t for t, model in calls if model == "jev-1.13"]
-        assert paid[0] - start >= 0.10
-        assert sum(model.endswith("free") for _, model in calls) >= 2
+        first = (await client.post("/v1/batches", json=batch(4, concurrency=1))).json()
+        assert (await completed(client, first["id"]))["completed"] == 4
+        assert asyncio.get_running_loop().time() - start < 0.2  # no waiting for the free route
+        assert calls.count("jev-1.13-free") == 1 and calls.count("jev-1.13") == 4
+        free_down["value"] = False
+        await asyncio.sleep(0.25)
+        calls.clear()
+        second = (await client.post("/v1/batches", json=batch(4, concurrency=1))).json()
+        assert (await completed(client, second["id"]))["completed"] == 4
+        assert calls == ["jev-1.13-free"] * 4  # the probe succeeded: everything is back on free
 
 
 @pytest.mark.asyncio
-async def test_batch_no_paid_cancel_and_queue_bound(tmp_path):
+async def test_batch_cancel_and_queue_bound(tmp_path):
     calls = []
-    def handler(request):
+    entered = asyncio.Event()
+    async def handler(request):
         calls.append(json.loads(request.content)["model"])
-        return httpx.Response(429)
-    async with service(tmp_path, handler, cooldown_seconds=0.03, queue_limit=2) as (client, app):
-        payload = batch(2)
-        payload["policy"]["allow_paid"] = False
-        created = (await client.post("/v1/batches", json=payload)).json()
-        await asyncio.sleep(0.1)
+        entered.set()
+        await asyncio.Event().wait()
+    async with service(tmp_path, handler, queue_limit=2) as (client, app):
+        created = (await client.post("/v1/batches", json=batch(2))).json()
+        await asyncio.wait_for(entered.wait(), 1)
         assert (await client.post("/v1/batches", json=batch(1))).status_code == 429
         assert (await client.delete(f'/v1/batches/{created["id"]}')).json()["status"] == "cancelled"
         count = len(calls)
         await asyncio.sleep(0.1)
         assert len(calls) == count
-        assert set(calls) == {"jev-1.13-free"}
         results = (await client.get(f'/v1/batches/{created["id"]}/results')).json()
         assert results["total"] == 2
         assert all(r["status_code"] == 499 for r in results["results"])
