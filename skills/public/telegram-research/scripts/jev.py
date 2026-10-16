@@ -343,12 +343,12 @@ def _normal(text):
     return " ".join((text or "").casefold().split())
 
 
-def _chunks(texts, unique):
-    """Batches within the gateway limits: MAX_ITEMS items and half of MAX_BYTES
-    (the request also carries the questions and JSON overhead per item)."""
+def _chunks(texts, unique, overhead=200):
+    """Batches within the gateway limits: MAX_ITEMS items and half of MAX_BYTES.
+    Every item of the request carries the questions too: OVERHEAD bytes on top of its text."""
     chunk, size = [], 0
     for text in texts:
-        item = len(encode(unique[text].get("text") or "")) + 200
+        item = len(encode(unique[text].get("text") or "")) + overhead
         if chunk and (len(chunk) == MAX_ITEMS or size + item > MAX_BYTES // 2):
             yield chunk
             chunk, size = [], 0
@@ -369,7 +369,7 @@ def _score(unique, instruction, scores, save, poll):
     """Score the texts of UNIQUE that SCORES (sha256(text) -> noul) lacks; SAVE() after each batch."""
     todo = [t for t in unique if hashlib.sha256(t.encode()).hexdigest() not in scores]
     questions = {"relevant": {"type": "noul", "instructions": instruction}}
-    for chunk in _chunks(todo, unique):
+    for chunk in _chunks(todo, unique, len(encode(questions)) + 200):
         ids = {hashlib.sha256(t.encode()).hexdigest(): t for t in chunk}
         handle = submit({"items": [{"id": k, "state": unique[t].get("text") or ""} for k, t in ids.items()], "questions": questions})
         while True:

@@ -146,6 +146,13 @@ def test_jev_batches_respect_size_limit(monkeypatch):
     assert sum(len(c) for c in chunks) == 10 and all(len(c) <= 2 for c in chunks)
 
 
+def test_jev_batches_count_the_instruction_in_every_item(monkeypatch):
+    monkeypatch.setattr(jev, "MAX_BYTES", 20000)
+    unique = {f"t{i}": {"text": "x"} for i in range(100)}
+    chunks = list(jev._chunks(list(unique), unique, overhead=1000))
+    assert all(len(c) <= 10 for c in chunks)  # a long instruction is repeated per item
+
+
 def test_jev_filter_dedups_texts_caches_scores_and_samples(monkeypatch):
     put([
         {**row(1, "d", text="Опыт  вахты"), "sources": ["keyword:вахта"]},
