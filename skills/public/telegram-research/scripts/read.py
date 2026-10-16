@@ -2,7 +2,7 @@
 
     read.py --grep 'вахт|смен'                     # regex like rg, case-insensitive
     read.py --count --grep 'билет|дорога'          # only how many match, per chat
-    read.py --chunks 300                           # split the whole selection into reading chunks
+    read.py --chunks                               # the reading chunks of the whole selection
     read.py --offset 600 --end 900                 # read one chunk, page by page
     read.py --offset 100                           # next page
 
@@ -23,6 +23,7 @@ from pathlib import Path
 import fire
 
 FILTERED = Path("messages_filtered.json")
+CHUNK = 300  # entries per reader: fixed, so notes/START.md always names the same chunk
 
 
 def _shape(text):
@@ -67,7 +68,7 @@ def render(m, number, width):
     return f"{head}\n{body}\n  {m.get('message_url')}"
 
 
-def read(file=None, grep=None, group=None, since=None, until=None, offset=0, end=None, max_chars=18000, width=100, count=False, chunks=None):
+def read(file=None, grep=None, group=None, since=None, until=None, offset=0, end=None, max_chars=18000, width=100, count=False, chunks=False):
     """Print the messages that match, one block each: number, date, chat, author, copies, text, link.
 
     FILE: JSON in the messages_filtered.json format (default messages_filtered.json).
@@ -75,7 +76,7 @@ def read(file=None, grep=None, group=None, since=None, until=None, offset=0, end
     SINCE, UNTIL: dates YYYY-MM-DD. OFFSET, END: entries [OFFSET, END), oldest first.
     MAX_CHARS: page size; keep it below the tool output limit.
     COUNT: print only the number of entries and their split by chat.
-    CHUNKS: print the ranges that split all entries into chunks of CHUNKS entries.
+    CHUNKS: print the ranges that split all entries into reading chunks of CHUNK entries.
     """
     messages = json.loads(Path(file or FILTERED).read_text())["messages"]
     found = collapse(select(messages, grep, group, since, until))
@@ -84,8 +85,7 @@ def read(file=None, grep=None, group=None, since=None, until=None, offset=0, end
         head = f"{len(found)} entries ({len(messages)} messages before collapsing near-duplicates), {len(by_chat)} chats"
         return "\n".join([head] + [f"{n:>6}  {name}" for name, n in by_chat.most_common(30)])
     if chunks:
-        size = int(chunks)
-        return "\n".join(f"--offset {start} --end {min(start + size, len(found))}" for start in range(0, len(found), size))
+        return "\n".join(f"--offset {start} --end {min(start + CHUNK, len(found))}" for start in range(0, len(found), CHUNK))
     offset = int(offset)
     stop = min(int(end), len(found)) if end is not None else len(found)
     blocks, size, position = [], 0, offset

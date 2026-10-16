@@ -1,6 +1,6 @@
 """Readers' notes for the final report: who read which chunk, and the notes of one vertical.
 
-    notes.py status --size 300        # which chunks of the selection still have no finished notes
+    notes.py status                   # which chunks of the selection still have no finished notes
     notes.py count                    # notes per vertical
     notes.py show 03-pay              # notes of one vertical, page by page
 
@@ -42,12 +42,12 @@ def _notes():
 
 
 class Notes:
-    def status(self, size=300):
+    def status(self):
         """List the chunks without finished notes (no `# done` line) and notes with an unknown vertical."""
         total = len(read.collapse(read.select(json.loads(read.FILTERED.read_text())["messages"])))
         missing = []
-        for start in range(0, total, int(size)):
-            end = min(start + int(size), total)
+        for start in range(0, total, read.CHUNK):
+            end = min(start + read.CHUNK, total)
             path = NOTES / f"{start}.md"
             lines = path.read_text().splitlines() if path.exists() else []
             if not lines or not DONE.match(lines[-1]) or DONE.match(lines[-1]).groups() != (str(start), str(end)):
@@ -55,7 +55,7 @@ class Notes:
                 missing.append(f"--offset {start} --end {end}" + (f" (read up to {max(upto)})" if upto else ""))
         known = set(_verticals())
         unknown = Counter(name for _, name, _ in _notes() if name not in known)
-        chunks = -(-total // int(size))
+        chunks = -(-total // read.CHUNK)
         out = [f"{chunks - len(missing)} of {chunks} chunks done ({total} entries)"]
         out += [f"not done: {chunk}" for chunk in missing]
         out += [f"unknown vertical {name!r}: {n} notes" for name, n in unknown.most_common()]

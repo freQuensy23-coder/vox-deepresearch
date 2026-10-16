@@ -230,18 +230,19 @@ def test_read_pages_fit_the_tool_output_limit_and_chunks_cover_everything():
     assert len(first) < 3500 and "next page: --offset" in first
     nxt = int(first.rsplit("--offset ", 1)[1])
     assert f"#{nxt + 1} " in read.read(offset=nxt, max_chars=3000)
-    assert read.read(chunks=8).splitlines() == ["--offset 0 --end 8", "--offset 8 --end 16", "--offset 16 --end 20"]
+    assert read.read(chunks=True).splitlines() == ["--offset 0 --end 20"]
     tail = read.read(offset=16, end=20, max_chars=100000)
     assert "#17 " in tail and "#20 " in tail and "range up to 20 read to the end" in tail
 
 
-def test_notes_status_count_and_show():
+def test_notes_status_count_and_show(monkeypatch):
     filtered_file([fm(i, "текст" + "я" * i) for i in range(1, 6)])
     Path("verticals.md").write_text("01-pay | ставки?\n02-food | питание?\n")
     Path("notes").mkdir()
     Path("notes/0.md").write_text("01-pay | 80 тыс за смену | https://t.me/g/1\n02-food | кормят трижды | https://t.me/g/2\n# done 0-3\n")
     Path("notes/3.md").write_text("01-pay | 90 тыс | https://t.me/g/4\nmisc | что-то | https://t.me/g/5\n# upto 4\n")
-    status = notes.Notes().status(size=3)
+    monkeypatch.setattr(notes.read, "CHUNK", 3)
+    status = notes.Notes().status()
     assert status.splitlines()[0] == "1 of 2 chunks done (5 entries)"
     assert "not done: --offset 3 --end 5 (read up to 4)" in status and "unknown vertical 'misc': 1 notes" in status
     assert notes.Notes().count().splitlines() == ["     2  01-pay", "     1  02-food"]
