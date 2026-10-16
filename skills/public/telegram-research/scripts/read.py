@@ -67,7 +67,7 @@ def render(m, number, width):
     return f"{head}\n{body}\n  {m.get('message_url')}"
 
 
-def read(file=None, grep=None, group=None, since=None, until=None, offset=0, end=None, max_chars=9000, width=100, count=False, chunks=None):
+def read(file=None, grep=None, group=None, since=None, until=None, offset=0, end=None, max_chars=25000, width=100, count=False, chunks=None):
     """Print the messages that match, one block each: number, date, chat, author, copies, text, link.
 
     FILE: JSON in the messages_filtered.json format (default messages_filtered.json).

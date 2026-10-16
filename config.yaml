@@ -1253,9 +1253,9 @@ tool_output:
   exempt_tools:
     - read_file
     - read_file_tool
-  # tool_overrides:
-  #   web_search: 8000
-  #   bash: 20000
+  # bash pages of telegram-research read.py / notes.py (25 000 chars) stay inline.
+  tool_overrides:
+    bash: 30000
   # Replace a successful write_file call's `content` with a short placeholder
   # pointing at read_file once a later successful read_file / write_file /
   # str_replace of the same path exists. Only the model-bound request changes.

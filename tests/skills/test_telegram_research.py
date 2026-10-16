@@ -240,10 +240,10 @@ def test_notes_status_count_and_show():
     Path("verticals.md").write_text("01-pay | ставки?\n02-food | питание?\n")
     Path("notes").mkdir()
     Path("notes/0.md").write_text("01-pay | 80 тыс за смену | https://t.me/g/1\n02-food | кормят трижды | https://t.me/g/2\n# done 0-3\n")
-    Path("notes/3.md").write_text("01-pay | 90 тыс | https://t.me/g/4\nmisc | что-то | https://t.me/g/5\n")
+    Path("notes/3.md").write_text("01-pay | 90 тыс | https://t.me/g/4\nmisc | что-то | https://t.me/g/5\n# upto 4\n")
     status = notes.Notes().status(size=3)
     assert status.splitlines()[0] == "1 of 2 chunks done (5 entries)"
-    assert "not done: --offset 3 --end 5" in status and "unknown vertical 'misc': 1 notes" in status
+    assert "not done: --offset 3 --end 5 (read up to 4)" in status and "unknown vertical 'misc': 1 notes" in status
     assert notes.Notes().count().splitlines() == ["     2  01-pay", "     1  02-food"]
     shown = notes.Notes().show("01-pay")
     assert "1. 80 тыс за смену | https://t.me/g/1" in shown and "2. 90 тыс" in shown and "-- 1–2 of 2" in shown

@@ -7,7 +7,8 @@
 verticals.md holds one vertical per line: `NAME | question`.
 A reader writes notes/START.md for the chunk read.py --offset START --end END:
 one note per line, `NAME | what the message says, with its numbers | message_url`,
-and as the last line `# done START-END` once the chunk is read to the end.
+`# upto N` after each page (entries before N are read), and as the last line
+`# done START-END` once the chunk is read to the end.
 """
 
 import json
@@ -23,6 +24,7 @@ import read
 NOTES = Path("notes")
 VERTICALS = Path("verticals.md")
 DONE = re.compile(r"# done (\d+)-(\d+)\s*\Z")
+UPTO = re.compile(r"# upto (\d+)\s*\Z")
 
 
 def _verticals():
@@ -49,7 +51,8 @@ class Notes:
             path = NOTES / f"{start}.md"
             lines = path.read_text().splitlines() if path.exists() else []
             if not lines or not DONE.match(lines[-1]) or DONE.match(lines[-1]).groups() != (str(start), str(end)):
-                missing.append(f"--offset {start} --end {end}")
+                upto = [int(m.group(1)) for m in map(UPTO.match, lines) if m]
+                missing.append(f"--offset {start} --end {end}" + (f" (read up to {max(upto)})" if upto else ""))
         known = set(_verticals())
         unknown = Counter(name for _, name, _ in _notes() if name not in known)
         chunks = -(-total // int(size))
@@ -63,7 +66,7 @@ class Notes:
         counts = Counter(name for _, name, _ in _notes())
         return "\n".join(f"{counts[name]:>6}  {name}" for name in _verticals())
 
-    def show(self, name, offset=0, max_chars=9000):
+    def show(self, name, offset=0, max_chars=25000):
         """Print the notes of vertical NAME from OFFSET, as many as fit in MAX_CHARS."""
         notes = [f"{note}" for _, vertical, note in _notes() if vertical == name]
         lines, size, position = [], 0, int(offset)
