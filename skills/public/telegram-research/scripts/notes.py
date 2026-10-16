@@ -53,7 +53,7 @@ class Notes:
             if not lines or not DONE.match(lines[-1]) or DONE.match(lines[-1]).groups() != (str(start), str(end)):
                 upto = [int(m.group(1)) for m in map(UPTO.match, lines) if m]
                 missing.append(f"--offset {start} --end {end}" + (f" (read up to {max(upto)})" if upto else ""))
-        known = set(_verticals())
+        known = {*_verticals(), "other"}
         unknown = Counter(name for _, name, _ in _notes() if name not in known)
         chunks = -(-total // read.CHUNK)
         out = [f"{chunks - len(missing)} of {chunks} chunks done ({total} entries)"]

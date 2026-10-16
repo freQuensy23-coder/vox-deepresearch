@@ -240,7 +240,7 @@ def test_notes_status_count_and_show(monkeypatch):
     Path("verticals.md").write_text("01-pay | ставки?\n02-food | питание?\n")
     Path("notes").mkdir()
     Path("notes/0.md").write_text("01-pay | 80 тыс за смену | https://t.me/g/1\n02-food | кормят трижды | https://t.me/g/2\n# done 0-3\n")
-    Path("notes/3.md").write_text("01-pay | 90 тыс | https://t.me/g/4\nmisc | что-то | https://t.me/g/5\n# upto 4\n")
+    Path("notes/3.md").write_text("01-pay | 90 тыс | https://t.me/g/4\nother | x | https://t.me/g/3\nmisc | что-то | https://t.me/g/5\n# upto 4\n")
     monkeypatch.setattr(notes.read, "CHUNK", 3)
     status = notes.Notes().status()
     assert status.splitlines()[0] == "1 of 2 chunks done (5 entries)"
