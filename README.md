@@ -5,7 +5,7 @@ for agent-driven research of public Telegram discussions through Vox.
 
 **Research pipeline** ([SKILL.md](skills/public/telegram-research/SKILL.md)):
 keyword message search over the requested period into one deduplicated pool
-(`messages_raw.json`), Jev filtering into `messages_filtered.json` with a
+(`messages_raw.db`, SQLite), Jev filtering into `messages_filtered.json` with a
 one-pass review of up to 100 examples and re-runs, then two subagents: one adds
 new keywords, the other picks 5–25 whales (topic leaders) into `registry.json`.
 The whales' messages in public chats join the pool, and the rounds repeat. The

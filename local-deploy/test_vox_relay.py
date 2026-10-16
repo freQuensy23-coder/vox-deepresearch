@@ -1,6 +1,7 @@
 import http.client
 import importlib.util
 import json
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -264,7 +265,8 @@ def test_real_vox_cli_uses_relay_without_upstream_key(relays, tmp_path, upstream
         timeout=5,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads((tmp_path / "messages_raw.json").read_text())["messages"] == []
+    with sqlite3.connect(tmp_path / "messages_raw.db") as db:
+        assert db.execute("SELECT count(*) FROM messages").fetchone() == (0,)
     assert (
         upstream.requests[0][2]["Authorization"] == "Bearer synthetic-relay-owned-key"
     )

@@ -20,6 +20,7 @@ from pathlib import Path
 
 UPSTREAM = "api.vox-lab.com"
 REQUEST_DEADLINE = 250.0  # seconds per Vox call; set from vox_relay.call_timeout in config.yaml
+QUEUE_LIMIT = 100  # callers waiting at once; set from vox_relay.queue_limit in config.yaml
 DEFAULTS = dict(client_timeout=30.0)
 MAX_TARGET = 8192
 MAX_HEADERS = 16384
@@ -59,6 +60,10 @@ class Rejected(Exception):
 
 
 class Cancelled(Exception):
+    pass
+
+
+class QueueFull(Exception):
     pass
 
 
@@ -163,7 +168,7 @@ def validate_target(method, target):
 
 
 class Gate:
-    """One active request and an unbounded FIFO of callers; no adaptive state."""
+    """One active request and a FIFO of at most QUEUE_LIMIT waiting callers."""
 
     def __init__(self, directory):
         self.directory = Path(directory)
@@ -174,6 +179,8 @@ class Gate:
     def acquire(self, cancelled):
         ticket = object()
         with self.condition:
+            if len(self.waiting) >= QUEUE_LIMIT:
+                raise QueueFull()
             self.waiting.append(ticket)
             self.condition.notify_all()
             try:
@@ -703,6 +710,16 @@ class RelayHandler(BaseHTTPRequestHandler):
         except Cancelled:
             observation.origin = "client_cancelled"
             return
+        except QueueFull:
+            observation.origin = "queue_full"
+            self.reply(
+                503,
+                {
+                    "error": "queue_full",
+                    "message": f"Vox queue is full: {QUEUE_LIMIT} requests are already waiting. Do other work meanwhile (review collected messages, check that everything runs, think about the final report) and retry in a couple of minutes.",
+                },
+            )
+            return
         observation.origin = "upstream"
         observation.emit("admitted")
         target = self.path
@@ -822,11 +839,12 @@ class RelayHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    global REQUEST_DEADLINE
+    global REQUEST_DEADLINE, QUEUE_LIMIT
     import deploy_config
 
     config = deploy_config.section("vox_relay")
     REQUEST_DEADLINE = float(config["call_timeout"])
+    QUEUE_LIMIT = int(config["queue_limit"])
     server = RelayServer(
         ("127.0.0.1", int(config["port"])),
         key=deploy_config.secret("VOX_API_KEY"),

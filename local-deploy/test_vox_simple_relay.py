@@ -265,6 +265,28 @@ def test_vox_edge_timeout_is_a_heavy_query_not_a_retry(stack):
     assert fetch(stack, "ordinary")[0] == 200
 
 
+def test_full_queue_answers_at_once_and_keeps_fifo(stack, monkeypatch):
+    monkeypatch.setattr(relay, "QUEUE_LIMIT", 2)
+    results = []
+    first = threading.Thread(target=lambda: results.append(fetch(stack, "hold")))
+    first.start()
+    await_calls(stack, 1)
+    waiting = [threading.Thread(target=lambda i=i: results.append(fetch(stack, f"w{i}"))) for i in range(2)]
+    for index, thread in enumerate(waiting):
+        thread.start()
+        with stack.server.gate.condition:
+            assert stack.server.gate.condition.wait_for(lambda: len(stack.server.gate.waiting) == index + 1, 2)
+    status, _, body = fetch(stack, "overflow")
+    assert status == 503
+    assert json.loads(body)["error"] == "queue_full"
+    assert "Do other work" in json.loads(body)["message"]
+    stack.release.set()
+    for thread in [first, *waiting]:
+        thread.join(5)
+    assert [row[0] for row in stack.calls] == ["hold", "w0", "w1"]
+    assert all(result[0] == 200 for result in results)
+
+
 def test_default_deadline_is_250_seconds():
     assert relay.REQUEST_DEADLINE == 250
 

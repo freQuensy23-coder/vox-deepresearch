@@ -1808,10 +1808,13 @@ deploy:
 # request to Vox at a time (FIFO), retries failures internally and returns only
 # complete responses. call_timeout bounds each single Vox call; a search that
 # overruns it is too heavy and the agent is told to make the query more specific.
+# queue_limit caps waiting requests; past it a request fails at once and the agent
+# is told to do other work and retry in a couple of minutes.
 # Paths are relative to the repo root.
 vox_relay:
   port: 8083
   call_timeout: 250
+  queue_limit: 100
   state_dir: backend/.deer-flow/vox-relay
 
 # Jev bridge (local-deploy/jev_bridge.py): holds JEV_GATEWAY_API_KEY from .env and forwards

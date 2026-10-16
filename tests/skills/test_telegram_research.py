@@ -3,12 +3,14 @@
 import importlib.util
 import io
 import json
+import sys
 import urllib.error
 from pathlib import Path
 
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "skills/public/telegram-research/scripts"
+sys.path.insert(0, str(SCRIPTS))  # the scripts import pool.py from their own folder
 
 
 def load(name):
@@ -20,6 +22,7 @@ def load(name):
 
 vox = load("vox")
 jev = load("jev")
+pool = load("pool")
 
 
 def row(mid, date, group=-1001, text=None, user=7):
@@ -33,7 +36,13 @@ def research_folder(tmp_path, monkeypatch):
 
 
 def raw():
-    return json.loads(Path("messages_raw.json").read_text())["messages"]
+    return list(pool.rows())
+
+
+def put(messages):
+    for message in messages:
+        for source in message.pop("sources"):
+            pool.add([(vox._key(message), message)], source)
 
 
 def test_full_window_is_split_until_complete_and_gaps_are_recovered(monkeypatch):
@@ -136,11 +145,11 @@ def test_jev_batches_respect_size_limit(monkeypatch):
 
 
 def test_jev_filter_dedups_texts_caches_scores_and_samples(monkeypatch):
-    Path("messages_raw.json").write_text(json.dumps({"messages": [
+    put([
         {**row(1, "d", text="Опыт  вахты"), "sources": ["keyword:вахта"]},
         {**row(2, "d", group=-2, text="опыт вахты"), "sources": ["whale:7"]},
         {**row(3, "d", text="реклама"), "sources": ["keyword:вахта"]},
-    ]}))
+    ])
     submitted = []
     monkeypatch.setattr(jev, "submit", lambda data: submitted.append(data) or {"id": "batch_x", "texts": {i["id"]: i["state"] for i in data["items"]}})
     monkeypatch.setattr(jev, "collect", lambda handle: {"complete": True, "results": [{"custom_id": k, "response": {"answers": {"relevant": {"noul": 0.9 if "пыт" in t else 0.1}}}} for k, t in handle["texts"].items()]})
@@ -155,18 +164,30 @@ def test_jev_filter_dedups_texts_caches_scores_and_samples(monkeypatch):
     assert lines[0].startswith("+ 0.90") and lines[1].startswith("- 0.10")
 
 
-def test_resumed_checkpoint_messages_reach_the_pool(monkeypatch):
-    out = Path("vox/search/вахта_2026-01-01_2026-02-01.json")
-    out.parent.mkdir(parents=True)
-    out.write_text(json.dumps({"query": "вахта", "since": "2026-01-01T00:00:00Z", "until": "2026-02-01T00:00:00Z", "kind": "all", "pending": [], "calls": 3, "messages": [vox._message(row(8, "2026-01-05T00:00:00Z"))]}))
-    monkeypatch.setattr(vox, "_call", lambda path, params: pytest.fail("no Vox call for a finished checkpoint"))
+def test_checkpoint_keeps_only_the_windows_left(monkeypatch):
+    monkeypatch.setattr(vox, "_call", lambda path, params: {"stop_reason": "finished", "messages": [row(8, "2026-01-05T00:00:00Z")]})
     vox.Vox().search("вахта", since="2026-01-01", until="2026-02-01")
+    state = json.loads(Path("vox/search/вахта_2026-01-01_2026-02-01.json").read_text())
+    assert state == {"query": "вахта", "since": "2026-01-01T00:00:00Z", "until": "2026-02-01T00:00:00Z", "kind": "all", "pending": [], "calls": 1, "complete": True}
     assert [m["id"] for m in raw()] == [8]
+
+
+def test_full_proxy_queue_tells_the_agent_to_do_other_work(monkeypatch):
+    body = json.dumps({"error": "queue_full", "message": "Vox queue is full: 100 requests are already waiting. Do other work meanwhile"}).encode()
+
+    class Opener:
+        def open(self, request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 503, "busy", {}, io.BytesIO(body))
+
+    monkeypatch.setenv("VOX_RELAY_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(vox, "_OPENER", Opener())
+    with pytest.raises(vox.VoxError, match="Do other work"):
+        vox._call("/search/text", {"query": "вахта"})
 
 
 def test_registry_shows_keyword_yield():
     vox.Vox().add_keywords("вахта", "межвахта", source="seed")
-    Path("messages_raw.json").write_text(json.dumps({"messages": [{"sources": ["keyword:вахта"]}, {"sources": ["keyword:вахта", "whale:7"]}]}))
+    put([{**row(1, "d"), "sources": ["keyword:вахта"]}, {**row(2, "d"), "sources": ["keyword:вахта", "whale:7"]}])
     Path("messages_filtered.json").write_text(json.dumps({"messages": [{"sources": ["keyword:вахта"]}]}))
     keywords = json.loads(vox.Vox().registry())["keywords"]
     assert [(k["word"], k["raw"], k["on_topic"]) for k in keywords] == [("вахта", 2, 1), ("межвахта", 0, 0)]

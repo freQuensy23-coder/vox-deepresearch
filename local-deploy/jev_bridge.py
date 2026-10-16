@@ -2,6 +2,7 @@ import http.client
 import importlib.util
 import json
 import re
+import sys
 import socketserver
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -25,6 +26,7 @@ def client_module():
         Path(__file__).resolve().parents[1]
         / "skills/public/telegram-research/scripts/jev.py"
     )
+    sys.path.insert(0, str(path.parent))  # jev.py imports pool.py from its folder
     spec = importlib.util.spec_from_file_location("jev_client", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

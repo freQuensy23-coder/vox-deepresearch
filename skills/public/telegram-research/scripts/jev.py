@@ -12,6 +12,8 @@ from pathlib import Path
 
 import fire
 
+import pool
+
 
 MAX_BYTES = 16 * 1024 * 1024
 MAX_ITEMS = 10000
@@ -331,7 +333,6 @@ def _run(mode, input, output):
     return str(target)
 
 
-RAW = Path("messages_raw.json")
 FILTERED = Path("messages_filtered.json")
 REJECTED = Path("jev/rejected.json")
 SCORES = Path("jev/scores.json")
@@ -380,16 +381,16 @@ class Jev:
         return _run("cancel", input, output)
 
     def filter(self, instruction, threshold=0.5, poll=10):
-        """Deduplicate messages_raw.json and keep messages on topic per INSTRUCTION.
+        """Deduplicate messages_raw.db and keep messages on topic per INSTRUCTION.
 
         Repeated texts are scored once (`duplicates` counts the copies). Scores are
         cached per instruction, so a new round only scores new messages; a new
         instruction rescores everything. Writes messages_filtered.json (fixed
         format) and jev/rejected.json.
         """
-        raw = json.loads(RAW.read_text(encoding="utf-8"))["messages"]
-        unique = {}
-        for m in raw:
+        unique, raw = {}, 0
+        for m in pool.rows():
+            raw += 1
             text = _normal(m.get("text"))
             if not text:
                 continue
@@ -421,10 +422,10 @@ class Jev:
             score = scores.get(hashlib.sha256(text.encode()).hexdigest())
             record = {"key": f"{m.get('group_id')}:{m.get('id')}", "message_id": m.get("id"), **{k: m.get(k) for k in FIELDS}, "duplicates": m["duplicates"], "jev_score": score}
             (relevant if score is not None and score >= threshold else rejected).append(record)
-        meta = {"instruction": instruction, "threshold": threshold, "raw_messages": len(raw), "unique_texts": len(unique), "unscored": sum(r["jev_score"] is None for r in rejected)}
+        meta = {"instruction": instruction, "threshold": threshold, "raw_messages": raw, "unique_texts": len(unique), "unscored": sum(r["jev_score"] is None for r in rejected)}
         _write(FILTERED, {**meta, "messages": relevant})
         _write(REJECTED, {**meta, "messages": rejected})
-        print(f"{len(raw)} raw, {len(unique)} unique, {len(relevant)} relevant, {len(rejected)} rejected ({meta['unscored']} unscored)", file=sys.stderr)
+        print(f"{raw} raw, {len(unique)} unique, {len(relevant)} relevant, {len(rejected)} rejected ({meta['unscored']} unscored)", file=sys.stderr)
         return str(FILTERED.resolve())
 
     def sample(self, n=100, width=300):

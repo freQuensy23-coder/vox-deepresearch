@@ -7,8 +7,9 @@
 `/mnt/skills/public/telegram-research/SKILL.md` — это правила, по которым
 выбираются слова.
 
-Работай из папки исследования. `messages_filtered.json` и `messages_raw.json`
-читай скриптами (`jq`, python): большие файлы целиком в контекст не выводи.
+Работай из папки исследования. `messages_filtered.json` читай скриптами (`jq`,
+python), `messages_raw.db` — запросами `sqlite3` из python; целиком в контекст
+не выводи.
 
 1. `python3 /mnt/skills/public/telegram-research/scripts/vox.py registry` —
    все слова со статусом и отдачей. Разложи их по частям карты рынка и найди

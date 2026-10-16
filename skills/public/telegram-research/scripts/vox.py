@@ -3,11 +3,12 @@
 through the Vox proxy at VOX_RELAY_URL. The proxy sends one request to Vox at a
 time, retries failures itself and returns only complete results. If one Vox call
 runs past its time limit, the command fails: the query is too heavy and should
-be made more specific. An empty result is a valid answer.
+be made more specific. An empty result is a valid answer. If the proxy queue is
+full, the command fails at once: do other work and retry later.
 
 Run from the research folder. It holds:
     registry.json       keywords and whales with their status
-    messages_raw.json   every message Vox returned, deduplicated, with sources
+    messages_raw.db     every message Vox returned, deduplicated, with sources (pool.py)
 
     vox.py search QUERY --since 2025-10-14 [--until ...] [--kind all|post|comment]
     vox.py whale USER_ID [--since 2025-10-14]
@@ -33,12 +34,14 @@ from pathlib import Path
 
 import fire
 
+import pool
+
 PAGE = 10000
 SEARCH_TIMEOUT = 600
 WHALE_LIMIT = 100000
 REGISTRY = Path("registry.json")
-RAW = Path("messages_raw.json")
 FILTERED = Path("messages_filtered.json")
+CHECKPOINT = ("query", "since", "until", "kind", "pending", "calls", "complete")
 
 
 class VoxError(Exception):
@@ -85,7 +88,7 @@ def _call(path, params=None):
             detail = json.loads(exc.read(4096))
         except (ValueError, OSError):
             detail = {}
-        if exc.code == 504 and isinstance(detail, dict) and detail.get("error") == "request_timeout":
+        if isinstance(detail, dict) and detail.get("error") in {"request_timeout", "queue_full"}:
             raise VoxError(detail["message"]) from None
         raise VoxError(f"HTTP {exc.code} at {path}.") from None
     except (urllib.error.URLError, OSError) as exc:
@@ -150,21 +153,8 @@ def _key(message):
 
 
 def _pool(messages, source):
-    """Merge messages into messages_raw.json, deduplicated, recording where each came from."""
-    with _locked(RAW):
-        pool = _load(RAW, {"messages": []})
-        index = {_key(m): m for m in pool["messages"]}
-        added = 0
-        for message in messages:
-            current = index.get(_key(message))
-            if current is None:
-                current = index[_key(message)] = {**message, "sources": []}
-                pool["messages"].append(current)
-                added += 1
-            if source not in current["sources"]:
-                current["sources"].append(source)
-        _save(RAW, pool)
-    print(f"{source}: {added} new, {len(pool['messages'])} in messages_raw.json", file=sys.stderr)
+    added, total = pool.add([(_key(m), m) for m in messages], source)
+    print(f"{source}: {added} new, {total} in messages_raw.db", file=sys.stderr)
 
 
 def _registry(update):
@@ -176,16 +166,15 @@ def _registry(update):
 
 
 def _traverse(state, out, query):
-    """Collect every match in the window. After each Vox call its new messages go
-    to messages_raw.json and the checkpoint is saved, so an interrupted search
-    loses nothing.
+    """Collect every match in the window. After each Vox call its messages go to
+    messages_raw.db and the checkpoint (the windows left) is saved, so an
+    interrupted search loses nothing.
 
     A response below the limit is complete for its window. A full response is
     not: Vox returns whatever it gathered first, with gaps between dates. So a
     full window is split in half and both halves are searched again, until each
     returns fewer than PAGE matches.
     """
-    seen = {_key(m) for m in state["messages"]}
     while state["pending"]:
         low, high = state["pending"].pop()
         page = _call(
@@ -201,21 +190,14 @@ def _traverse(state, out, query):
                 "stream": True,
             },
         )
-        found = []
-        for row in page["messages"]:
-            message = _message(row)
-            if row.get("is_private") is not True and _key(message) not in seen:
-                seen.add(_key(message))
-                found.append(message)
-        _pool(found, f"keyword:{query}")
-        state["messages"] += found
+        _pool([_message(row) for row in page["messages"] if row.get("is_private") is not True], f"keyword:{query}")
         state["calls"] += 1
         start, end = _date(low), _date(high)
         if len(page["messages"]) >= PAGE and end - start > timedelta(seconds=1):
             middle = _iso(start + (end - start) / 2)
             state["pending"] += [[low, middle], [middle, high]]
         _save(out, state)
-        print(f"{query!r}: {state['calls']} calls, {len(state['pending'])} windows left, {len(state['messages'])} messages", file=sys.stderr)
+        print(f"{query!r}: {state['calls']} calls, {len(state['pending'])} windows left", file=sys.stderr)
 
 
 class Vox:
@@ -224,18 +206,16 @@ class Vox:
     def search(self, query, since, until=None, kind="all"):
         """All messages matching QUERY (words are ANDed) from SINCE to UNTIL (default now).
         Full responses are split by date until complete. Each Vox response is added to
-        messages_raw.json right away; the keyword is marked searched at the end."""
+        messages_raw.db right away; the keyword is marked searched at the end."""
         query = str(query)
         if not 3 <= len(query) < 50:
             raise VoxError("Vox needs a query of 3..49 characters.")
         until = _iso(until or datetime.now(timezone.utc))
         out = Path(f"vox/search/{_slug(query)}_{_iso(since)[:10]}_{until[:10]}.json")
         if out.exists():
-            state = _load(out)
-            # The checkpoint may hold messages a crash kept out of the pool.
-            _pool(state["messages"], f"keyword:{query}")
+            state = {k: v for k, v in _load(out).items() if k in CHECKPOINT}
         else:
-            state = {"query": query, "since": _iso(since), "until": until, "kind": kind, "pending": [[_iso(since), until]], "calls": 0, "messages": []}
+            state = {"query": query, "since": _iso(since), "until": until, "kind": kind, "pending": [[_iso(since), until]], "calls": 0}
         _traverse(state, out, query)
         state["complete"] = True
         _save(out, state)
@@ -246,11 +226,11 @@ class Vox:
                     item["status"] = "searched"
 
         _registry(mark)
-        return str(RAW.resolve())
+        return str(pool.DB.resolve())
 
     def whale(self, user_id, since=None):
         """A whale's messages in public chats (Vox user_tracker messages panel only).
-        Adds them to messages_raw.json and marks the whale fetched."""
+        Adds them to messages_raw.db and marks the whale fetched."""
         uid = int(user_id)
         data = _call(f"/user_tracker/{uid}/panels/messages", {"limit": WHALE_LIMIT})
         _save(f"vox/whales/{uid}.json", data)
@@ -264,7 +244,7 @@ class Vox:
                     item["status"] = "fetched"
 
         _registry(mark)
-        return str(RAW.resolve())
+        return str(pool.DB.resolve())
 
     def authors(self, top=50):
         """Most active authors in messages_filtered.json: message and group counts, sample URLs."""
@@ -309,9 +289,9 @@ class Vox:
 
     def registry(self):
         """Print registry.json with each keyword's and whale's yield: messages in
-        messages_raw.json and on-topic ones in messages_filtered.json."""
+        messages_raw.db and on-topic ones in messages_filtered.json."""
         registry = _load(REGISTRY, {"keywords": [], "whales": []})
-        raw = Counter(s for m in _load(RAW, {"messages": []})["messages"] for s in m.get("sources", []))
+        raw = Counter(pool.source_counts())
         filtered = Counter(s for m in _load(FILTERED, {"messages": []})["messages"] for s in m.get("sources", []))
         for item in registry["keywords"]:
             item["raw"], item["on_topic"] = raw[f"keyword:{item['word']}"], filtered[f"keyword:{item['word']}"]
