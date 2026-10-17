@@ -10,7 +10,7 @@ import sys
 import threading
 import uuid
 from collections.abc import Callable, Coroutine, Mapping
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextvars import Context, copy_context
 from copy import deepcopy
@@ -602,12 +602,20 @@ _isolated_subagent_loop_lock = threading.Lock()
 _isolated_subagent_loop_shutdown_lock = threading.Lock()
 
 
+# Every subagent of the process shares the isolated loop, and its blocking work runs in the
+# loop's default executor: synchronous model calls (held for minutes while a reply streams)
+# and trace writes. asyncio sizes that pool by CPU count (8 threads on a 4-CPU pod), which
+# silently capped concurrent subagents far below subagent_runtime.max_running.
+ISOLATED_LOOP_WORKERS = 256
+
+
 def _run_isolated_subagent_loop(
     loop: asyncio.AbstractEventLoop,
     started_event: threading.Event,
 ) -> None:
     """Run the persistent isolated subagent loop in a dedicated daemon thread."""
     asyncio.set_event_loop(loop)
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=ISOLATED_LOOP_WORKERS, thread_name_prefix="subagent-blocking"))
     loop.call_soon(started_event.set)
     try:
         loop.run_forever()

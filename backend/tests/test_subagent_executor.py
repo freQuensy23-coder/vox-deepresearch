@@ -3106,6 +3106,18 @@ class TestThreadSafety:
 
         return _patch_default_get_app_config(importlib.reload(executor))
 
+    def test_isolated_subagent_loop_runs_many_blocking_calls_at_once(self, executor_module):
+        """Subagents' synchronous model calls run in the loop's default executor; a
+        CPU-sized pool (at most 32 threads) would run 100 of them in 4 rounds or more."""
+        loop = executor_module._get_isolated_subagent_loop()
+
+        async def burst():
+            await asyncio.gather(*(asyncio.to_thread(time.sleep, 0.3) for _ in range(100)))
+
+        started = time.monotonic()
+        asyncio.run_coroutine_threadsafe(burst(), loop).result(timeout=10)
+        assert time.monotonic() - started < 1.0
+
     def test_run_on_isolated_subagent_loop_survives_caller_loop_teardown(self, executor_module):
         """Pinning work to the process-owned persistent subagent loop must keep
         it runnable after the short-lived caller loop is torn down.
