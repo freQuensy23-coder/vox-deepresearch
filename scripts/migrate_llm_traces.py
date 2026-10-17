@@ -22,7 +22,7 @@ import os
 import re
 import shutil
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 CALL_DIR = re.compile(r"[0-9a-f]{64}")
@@ -99,7 +99,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("root", type=Path)
     parser.add_argument("--stage", type=Path, default=Path("/tmp/llm-trace-migration"))
-    parser.add_argument("--workers", type=int, default=32)
+    parser.add_argument("--workers", type=int, default=4, help="more parallel deletes can stall a network volume")
     args = parser.parse_args()
     root = args.root.resolve()
 
@@ -111,14 +111,16 @@ def main():
     print(f"{len(calls)} call directories", file=sys.stderr)
     moved = unreadable = failed = 0
     with ThreadPoolExecutor(args.workers) as pool:
-        for index, result in enumerate(pool.map(lambda call: _safe(migrate_call, call, args.stage), calls), 1):
+        futures = [pool.submit(_safe, migrate_call, call, args.stage) for call in calls]
+        for index, future in enumerate(as_completed(futures), 1):
+            result = future.result()
             if isinstance(result, Exception):
                 failed += 1
                 print(f"failed: {type(result).__name__}: {result}", file=sys.stderr)
             else:
                 moved += result[0]
                 unreadable += result[1]
-            if index % 200 == 0:
+            if index % 50 == 0:
                 print(f"{index}/{len(calls)} calls, {moved} records moved", file=sys.stderr, flush=True)
     print(json.dumps({"calls": len(calls), "records_moved": moved, "unreadable_files_left": unreadable, "failed_calls": failed}))
     if args.stage.exists() and not any(args.stage.rglob("*.jsonl")):
