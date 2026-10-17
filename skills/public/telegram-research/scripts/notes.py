@@ -3,6 +3,7 @@
     notes.py status                   # which chunks of the selection still have no finished notes
     notes.py count                    # notes per vertical
     notes.py show 03-pay              # notes of one vertical, page by page
+    notes.py grep 'скаут|scout'       # notes of any vertical whose text matches, page by page
 
 verticals.md holds one vertical per line: `NAME | question`.
 A reader writes notes/START.md for the chunk read.py --offset START --end END:
@@ -68,19 +69,28 @@ class Notes:
 
     def show(self, name, offset=0, max_chars=18000):
         """Print the notes of vertical NAME from OFFSET, as many as fit in MAX_CHARS."""
-        notes = [f"{note}" for _, vertical, note in _notes() if vertical == name]
-        lines, size, position = [], 0, int(offset)
-        while position < len(notes):
-            line = f"{position + 1}. {notes[position]}"
-            if lines and size + len(line) > int(max_chars):
-                break
-            lines.append(line)
-            size += len(line) + 1
-            position += 1
-        tail = f"-- {int(offset) + 1 if lines else 0}–{position} of {len(notes)}"
-        if position < len(notes):
-            tail += f"; next page: --offset {position}"
-        return "\n".join(lines + [tail])
+        return _page([note for _, vertical, note in _notes() if vertical == name], offset, max_chars)
+
+    def grep(self, pattern, offset=0, max_chars=18000):
+        """Print the notes of any vertical matching the regex PATTERN (case-insensitive)."""
+        regex = re.compile(str(pattern), re.IGNORECASE)
+        return _page([f"[{vertical}] {note}" for _, vertical, note in _notes() if regex.search(note)], offset, max_chars)
+
+
+def _page(notes, offset, max_chars):
+    """As many NOTES from OFFSET as fit in MAX_CHARS, numbered, with where the next page starts."""
+    lines, size, position = [], 0, int(offset)
+    while position < len(notes):
+        line = f"{position + 1}. {notes[position]}"
+        if lines and size + len(line) > int(max_chars):
+            break
+        lines.append(line)
+        size += len(line) + 1
+        position += 1
+    tail = f"-- {int(offset) + 1 if lines else 0}–{position} of {len(notes)}"
+    if position < len(notes):
+        tail += f"; next page: --offset {position}"
+    return "\n".join(lines + [tail])
 
 
 def main():

@@ -248,6 +248,8 @@ def test_notes_status_count_and_show(monkeypatch):
     assert notes.Notes().count().splitlines() == ["     2  01-pay", "     1  02-food"]
     shown = notes.Notes().show("01-pay")
     assert "1. 80 тыс за смену | https://t.me/g/1" in shown and "2. 90 тыс" in shown and "-- 1–2 of 2" in shown
+    found = notes.Notes().grep("кормят|90")
+    assert "[02-food] кормят трижды" in found and "[01-pay] 90 тыс" in found and "-- 1–2 of 2" in found
 
 
 def test_facts_lists_every_group_with_links_and_counts():
