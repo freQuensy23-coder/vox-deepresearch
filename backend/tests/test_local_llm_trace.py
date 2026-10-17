@@ -20,7 +20,7 @@ def tracing():
 
 
 def records(root):
-    return [json.loads(p.read_text()) for p in root.rglob("*.json")]
+    return [json.loads(line) for p in root.rglob("*.jsonl") for line in p.read_text().splitlines() if line]
 
 
 def test_full_trace_permissions_redaction_and_correlation(tmp_path, monkeypatch):
@@ -73,7 +73,6 @@ def test_concurrent_atomic_records(tmp_path, monkeypatch):
     rows = records(tmp_path)
     assert len(rows) == 64
     assert len({r["call_id"] for r in rows}) == 32
-    assert not list(tmp_path.rglob("*.pending"))
 
 
 def test_cancellation_and_trace_failure_do_not_replace_result(tmp_path, monkeypatch, caplog):
@@ -203,7 +202,7 @@ def test_interrupted_recovery_and_owner_isolation(tmp_path, monkeypatch):
         finally:
             reset_current_user(token)
     starts = records(tmp_path)
-    assert len({p.parent.parent.name for p in tmp_path.rglob("*.json")}) == 2
+    assert len({p.parent.name for p in tmp_path.rglob("*.jsonl")}) == 2
     assert trace.mark_interrupted_calls(tmp_path / "traces", process_instance_id=starts[0]["process_instance_id"], confirmed_stopped=True) == 2
     assert len([r for r in records(tmp_path) if r["event"] == "call_interrupted"]) == 2
     assert trace.mark_interrupted_calls(tmp_path / "traces", process_instance_id=starts[0]["process_instance_id"], confirmed_stopped=True) == 0
@@ -411,3 +410,15 @@ def test_recovered_gap_stays_in_original_owner_bucket(tmp_path, monkeypatch):
             reset_current_user(token)
     gap = next(r for r in records(tmp_path) if r["event"] == "trace_gap")
     assert gap["owner_id"] == "first-owner"
+
+
+def test_calls_of_one_thread_share_one_session_file(tmp_path, monkeypatch):
+    trace = tracing()
+    monkeypatch.setenv("DEER_FLOW_LLM_TRACE_DIR", str(tmp_path / "traces"))
+    for _ in range(3):
+        call = trace.CallTrace(metadata={"thread_id": "thread-1"})
+        call.emit("call_start", {"messages": []})
+        call.emit("provider_sse", {"line": "data: x"})
+    files = list((tmp_path / "traces").rglob("*.jsonl"))
+    assert [p.name for p in files] == ["thread-1.jsonl"]
+    assert len(files[0].read_text().splitlines()) == 6

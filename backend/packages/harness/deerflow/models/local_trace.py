@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import dataclasses
+import fcntl
 import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -93,18 +95,17 @@ def trace_health(root=None):
     if root.is_symlink():
         unreadable = 1
     elif root.exists():
-        for path in root.glob("*/*/*.json"):
+        for record in _session_records(root):
             try:
-                if path.is_symlink():
-                    raise OSError("Trace record symlink rejected")
-                record = json.loads(path.read_text(encoding="utf-8"))
+                if record is None:
+                    raise ValueError("Unreadable trace record")
                 if record["event"] == "tool_start":
                     tool_starts.add(record["call_id"])
                 if record["event"] in {"tool_end", "tool_interrupted"}:
                     tool_ends.add(record["call_id"])
                 if record["event"] == "trace_gap":
                     persisted.add((record["process_instance_id"], record["payload"]["call_id"], record["payload"]["utc"]))
-            except (OSError, ValueError, KeyError):
+            except (ValueError, KeyError):
                 unreadable += 1
     with _gap_lock:
         pending = sum(not gap["persisted"] for gap in _trace_gaps)
@@ -132,24 +133,48 @@ def _private_directory(path):
     return path
 
 
-def _write_record(directory, record):
-    _private_directory(directory)
-    target = directory / f"{record['monotonic_ns']}-{uuid4().hex}.json"
-    pending = target.with_suffix(".pending")
-    descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+_SAFE_SESSION = re.compile(r"[A-Za-z0-9_.-]{1,128}")
+
+
+def session_file(bucket, thread_id):
+    """One JSONL trace file per session (thread): readable thread ids are kept, anything else is hashed."""
+    name = str(thread_id) if thread_id is not None else "no-thread"
+    if not _SAFE_SESSION.fullmatch(name) or name.startswith("."):
+        name = hashlib.sha256(name.encode()).hexdigest()
+    return bucket / f"{name}.jsonl"
+
+
+def _write_record(path, record):
+    """Append one record as a JSON line. One file per session instead of one per record: on a
+    network volume every file costs a whole storage block and every fsync a round trip. The
+    caller has created and checked the session directory."""
+    line = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(record, stream, ensure_ascii=False, separators=(",", ":"))
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(pending, target)
-        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        view = memoryview(line)
+        while view:
+            view = view[os.write(descriptor, view) :]
     finally:
-        pending.unlink(missing_ok=True)
+        os.close(descriptor)
+
+
+def _session_records(root):
+    """Every record of every session file under ROOT; None for an unreadable line or file."""
+    for path in Path(root).glob("*/*.jsonl"):
+        if path.is_symlink():
+            yield None
+            continue
+        try:
+            with path.open(encoding="utf-8") as stream:
+                for line in stream:
+                    if line.strip():
+                        try:
+                            yield json.loads(line)
+                        except ValueError:
+                            yield None
+        except OSError:
+            yield None
 
 
 def _correlation(metadata=None):
@@ -193,7 +218,7 @@ class CallTrace:
         self.call_id = str(call_id or uuid4())
         self.parent_call_id = str(parent_call_id) if parent_call_id is not None else None
         self.correlation = _correlation(metadata)
-        self.directory = None
+        self.path = None
         self.lock = threading.RLock()
         self.started_monotonic_ns = time.monotonic_ns()
         self.wire_attempt = 0
@@ -201,13 +226,12 @@ class CallTrace:
     def emit(self, event, payload=None, *, attempt=None, secrets=()):
         try:
             with self.lock:
-                if self.directory is None:
+                if self.path is None:
                     from deerflow.config.runtime_paths import runtime_home
 
                     root = _private_directory(Path(os.environ.get("DEER_FLOW_LLM_TRACE_DIR") or runtime_home() / "llm-traces"))
                     owner = hashlib.sha256(str(self.correlation["owner_id"]).encode()).hexdigest()
-                    bucket = _private_directory(root / owner)
-                    self.directory = _private_directory(bucket / hashlib.sha256(self.call_id.encode()).hexdigest())
+                    self.path = session_file(_private_directory(root / owner), self.correlation["thread_id"])
                 record = {
                     "schema_version": 1,
                     "event": event,
@@ -225,16 +249,16 @@ class CallTrace:
                 with _gap_lock:
                     for gap in _trace_gaps:
                         writer = gap["writer"]
-                        if not gap["persisted"] and writer.directory is not None:
+                        if not gap["persisted"] and writer.path is not None:
                             try:
                                 _write_record(
-                                    writer.directory,
+                                    writer.path,
                                     {**record, **writer.correlation, "call_id": writer.call_id, "parent_call_id": writer.parent_call_id, "event": "trace_gap", "payload": {k: v for k, v in gap.items() if k not in {"persisted", "writer"}}},
                                 )
                                 gap["persisted"] = True
                             except Exception:
                                 pass
-                _write_record(self.directory, record)
+                _write_record(self.path, record)
                 return True
         except Exception as error:
             with _gap_lock:
@@ -357,25 +381,26 @@ def mark_interrupted_calls(root, *, process_instance_id, confirmed_stopped=False
     if not confirmed_stopped:
         raise ValueError("Confirm the writer process has stopped before recovery")
     count = 0
-    for directory in Path(root).glob("*/*"):
-        if not directory.is_dir() or directory.is_symlink():
-            continue
-        start = None
-        finished = False
-        for path in directory.glob("*.json"):
-            if path.is_symlink():
-                raise OSError("Trace record symlink rejected")
-            with path.open(encoding="utf-8") as stream:
-                record = json.load(stream)
-            if record.get("process_instance_id") != process_instance_id:
+    for path in Path(root).glob("*/*.jsonl"):
+        if path.is_symlink():
+            raise OSError("Trace record symlink rejected")
+        starts, finished = {}, set()
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                if record.get("process_instance_id") != process_instance_id:
+                    continue
+                if record["event"] in {"call_start", "tool_start"}:
+                    starts[record["call_id"]] = record
+                if record["event"] in {"call_end", "call_error", "call_cancelled", "call_interrupted", "tool_end", "tool_interrupted"}:
+                    finished.add(record["call_id"])
+        for call_id, start in starts.items():
+            if call_id in finished:
                 continue
-            if record["event"] in {"call_start", "tool_start"}:
-                start = record
-            if record["event"] in {"call_end", "call_error", "call_cancelled", "call_interrupted", "tool_end", "tool_interrupted"}:
-                finished = True
-        if start is not None and not finished:
             _write_record(
-                directory,
+                path,
                 {
                     **start,
                     "event": "tool_interrupted" if start["event"] == "tool_start" else "call_interrupted",

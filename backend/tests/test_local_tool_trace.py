@@ -14,7 +14,7 @@ from deerflow.extensions.stack import compose_with_extensions
 
 
 def records(root):
-    return sorted([json.loads(p.read_text()) for p in root.rglob("*.json")], key=lambda r: r["monotonic_ns"])
+    return sorted([json.loads(line) for p in root.rglob("*.jsonl") for line in p.read_text().splitlines() if line], key=lambda r: r["monotonic_ns"])
 
 
 def stack(middlewares=()):
