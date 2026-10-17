@@ -7,7 +7,8 @@ volume every one of those small files costs a whole storage block. The new layou
 (deerflow.models.local_trace.session_file) is ROOT/<owner>/<thread_id>.jsonl.
 
 For each call directory the records are first staged on local disk, then the old files
-are deleted (this is what frees the quota when the volume is full), then the lines are
+are truncated and deleted (this is what frees the quota when the volume is full: a plain
+delete moves the blocks to the volume's trash, where they still count), then the lines are
 appended to the session files. A failed append leaves its stage behind; a rerun appends
 the leftover stages first. Run it as the user that owns the traces, with the writers
 stopped or running: new records already go to the session files.
@@ -47,6 +48,16 @@ def append(path, data):
         os.close(descriptor)
 
 
+def _release(path):
+    """Truncate before unlinking: a deleted file goes to the volume's trash and keeps its
+    blocks in the quota, an empty one does not."""
+    try:
+        os.truncate(path, 0)
+    except FileNotFoundError:
+        return
+    path.unlink(missing_ok=True)
+
+
 def flush_stage(stage, owner_dir):
     """Append every staged session chunk of one call to its session file, then drop the stage."""
     for chunk in sorted(stage.glob("*.jsonl")):
@@ -77,7 +88,7 @@ def migrate_call(call_dir, stage_root):
     for name, lines in sessions.items():
         (stage / name).write_text("".join(lines), encoding="utf-8")
     for path in done:
-        path.unlink(missing_ok=True)
+        _release(path)
     if not unreadable:
         call_dir.rmdir()
     flush_stage(stage, owner_dir)
