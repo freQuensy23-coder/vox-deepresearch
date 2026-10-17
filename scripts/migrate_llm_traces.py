@@ -15,13 +15,13 @@ stopped or running: new records already go to the session files.
 """
 
 import argparse
-import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -37,15 +37,23 @@ def session_name(thread_id):
     return f"{name}.jsonl"
 
 
+_locks = {}
+_locks_guard = threading.Lock()
+
+
 def append(path, data):
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        view = memoryview(data)
-        while view:
-            view = view[os.write(descriptor, view) :]
-    finally:
-        os.close(descriptor)
+    """Threads take turns per file. No flock: on the network volume a lock left by a dead
+    client is never released."""
+    with _locks_guard:
+        lock = _locks.setdefault(path, threading.Lock())
+    with lock:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(descriptor, view) :]
+        finally:
+            os.close(descriptor)
 
 
 def _release(path):

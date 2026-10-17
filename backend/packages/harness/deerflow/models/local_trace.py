@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import dataclasses
-import fcntl
 import hashlib
 import json
 import logging
@@ -134,6 +133,8 @@ def _private_directory(path):
 
 
 _SAFE_SESSION = re.compile(r"[A-Za-z0-9_.-]{1,128}")
+_append_locks: dict[Path, threading.Lock] = {}
+_append_locks_guard = threading.Lock()
 
 
 def session_file(bucket, thread_id):
@@ -147,16 +148,20 @@ def session_file(bucket, thread_id):
 def _write_record(path, record):
     """Append one record as a JSON line. One file per session instead of one per record: on a
     network volume every file costs a whole storage block and every fsync a round trip. The
-    caller has created and checked the session directory."""
+    caller has created and checked the session directory. Threads of this process take turns
+    per file; there is no flock: on the network volume a lock left by a dead client is never
+    released and would block every later write."""
     line = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        view = memoryview(line)
-        while view:
-            view = view[os.write(descriptor, view) :]
-    finally:
-        os.close(descriptor)
+    with _append_locks_guard:
+        lock = _append_locks.setdefault(path, threading.Lock())
+    with lock:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        try:
+            view = memoryview(line)
+            while view:
+                view = view[os.write(descriptor, view) :]
+        finally:
+            os.close(descriptor)
 
 
 def _session_records(root):
