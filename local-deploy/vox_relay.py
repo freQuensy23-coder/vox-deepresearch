@@ -25,7 +25,8 @@ DEFAULTS = dict(client_timeout=30.0)
 MAX_TARGET = 8192
 MAX_HEADERS = 16384
 MAX_BODY = 16384
-INTEGER_BOUNDS = dict(limit=(1, 10000), timeout=(10, 600))
+INTEGER_BOUNDS = dict(limit=(1, 10000), timeout=(10, 600), messages_limit=(1, 10000), messages_min=(0, 10**9), members_min=(0, 10**9))
+GROUP_FIELDS = {"messages_limit", "messages_min", "members_min"}
 SEARCH_FIELDS = {
     "query",
     "limit",
@@ -153,14 +154,17 @@ def validate_target(method, target):
     except (ValueError, UnicodeError):
         raise Rejected(400) from None
     path = parts.path
-    # Research needs exactly two Vox APIs: text search and a user's messages in
-    # public chats (user_tracker messages panel). Everything else is refused.
+    # Research needs exactly three Vox APIs: text search, a user's messages in
+    # public chats (user_tracker messages panel) and a group's latest posts.
+    # Everything else is refused, group members among them.
     if path in {"/health", "/status"}:
         allowed = set()
     elif path == "/search/text":
         allowed = SEARCH_FIELDS
     elif re.fullmatch(r"/user_tracker/[1-9][0-9]{0,18}/panels/messages", path):
         allowed = {"limit"}
+    elif re.fullmatch(r"/groups/-?[1-9][0-9]{0,18}/messages", path):
+        allowed = GROUP_FIELDS
     else:
         raise Rejected(403)
     validate_fields(values, allowed, path)
@@ -365,6 +369,8 @@ class RequestObservation:
         self.route_class = routes.get(path, "unknown")
         if re.fullmatch(r"/user_tracker/[0-9]+/panels/messages", path):
             self.route_class = "user_messages"
+        if re.fullmatch(r"/groups/-?[0-9]+/messages", path):
+            self.route_class = "group_messages"
 
     def emit(self, event):
         now = time.monotonic()

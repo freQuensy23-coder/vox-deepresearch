@@ -209,14 +209,17 @@ def test_denials_never_open_upstream(relays, upstream, path, method, headers, bo
     assert not upstream.starts
 
 
-def test_only_search_and_whale_messages_reach_vox(relays, upstream):
+def test_only_search_whale_and_group_messages_reach_vox(relays, upstream):
     server = relays()
     assert request(server, "/search/text?query=test")[0] == 200
     assert request(server, "/user_tracker/123/panels/messages?limit=100000")[0] == 200
+    assert request(server, "/groups/-1001/messages?messages_limit=10000&messages_min=0&members_min=0")[0] == 200
     for path in (
         "/search/ai/raw/GROUP?query=test&limit=10",
         "/groups/-1001",
-        "/groups/-1001/messages?messages_limit=10",
+        "/groups/-1001/members",
+        "/groups/-1001/messages?messages_limit=10001&messages_min=0&members_min=0",
+        "/groups/-1001/messages?limit=10",
         "/ai_analytics/GROUP/-1001",
         "/user_tracker/123/panels/groups",
         "/user_tracker/123/panels/top_groups?limit=10",
@@ -224,7 +227,7 @@ def test_only_search_and_whale_messages_reach_vox(relays, upstream):
     ):
         assert request(server, path)[0] in {400, 403}, path
     assert request(server, "/reporter/parse", "POST", b"{}", {"Content-Type": "application/json"})[0] == 405
-    assert len(upstream.starts) == 2
+    assert len(upstream.starts) == 3
 
 
 def test_health_and_status_do_not_contact_upstream(relays, upstream):
