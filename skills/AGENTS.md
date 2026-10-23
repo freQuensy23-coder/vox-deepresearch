@@ -6,7 +6,9 @@
   subagent, whale messages from public chats added to the pool, repeated rounds.
   `scripts/vox.py` (fire) is the only Vox client and calls only the Vox proxy,
   which allows only text search, the user_tracker messages panel and a group's
-  latest posts; `scripts/jev.py` talks only to the Jev bridge. After the first
+  latest posts, and admits into the pool only publicly readable messages (a chat
+  with a public name, or a comment under a public channel); `scripts/jev.py`
+  talks only to the Jev bridge. After the first
   report the deep stage (`references/deep-agent.md`) rebuilds whole stories from
   public t.me pages with `scripts/tme.py`, which calls only the t.me proxy and
   caches pages in `tme.db`. Scripts fetch, merge and count; the agent chooses

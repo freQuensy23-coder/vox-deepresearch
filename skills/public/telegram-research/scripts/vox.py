@@ -132,6 +132,22 @@ def _locked(path):
         yield
 
 
+PUBLIC_CHAT = re.compile(r"https?://t\.me/[A-Za-z]\w{3,31}/?$")
+
+
+def _public(row):
+    """Whether anyone can read the message: a chat with a public name, or a
+    comment in the discussion chat of a public channel. Vox also indexes chats
+    with neither (closed groups); they never enter the pool."""
+    if row.get("is_private") is True:
+        return False
+    if row.get("group_alias") or row.get("related_group_alias"):
+        return True
+    if PUBLIC_CHAT.match(str(row.get("related_group_url") or "")):
+        return True
+    return bool(re.match(r"https?://t\.me/(?!c/)[^/]+/\d+", str(row.get("message_url") or "")))
+
+
 def _message(row, user_id=None):
     message_id = row.get("id")
     if message_id is None and row.get("message_url"):
@@ -190,7 +206,7 @@ def _traverse(state, out, query):
                 "stream": True,
             },
         )
-        _pool([_message(row) for row in page["messages"] if row.get("is_private") is not True], f"keyword:{query}")
+        _pool([_message(row) for row in page["messages"] if _public(row)], f"keyword:{query}")
         state["calls"] += 1
         start, end = _date(low), _date(high)
         if len(page["messages"]) >= PAGE and end - start > timedelta(seconds=1):
@@ -229,13 +245,13 @@ class Vox:
         return str(pool.DB.resolve())
 
     def whale(self, user_id, since=None):
-        """A whale's messages in public chats (Vox user_tracker messages panel only).
+        """A whale's messages in public chats and public channels' comments (Vox user_tracker messages panel only).
         Adds them to messages_raw.db and marks the whale fetched."""
         uid = int(user_id)
         data = _call(f"/user_tracker/{uid}/panels/messages", {"limit": WHALE_LIMIT})
         _save(f"vox/whales/{uid}.json", data)
         low = _date(since) if since else None
-        messages = [_message(row, user_id=uid) for row in data.get("rows") or [] if row.get("is_private") is not True and (low is None or _date(row["date"]) >= low)]
+        messages = [_message(row, user_id=uid) for row in data.get("rows") or [] if _public(row) and (low is None or _date(row["date"]) >= low)]
         _pool(messages, f"whale:{uid}")
 
         def mark(registry):
