@@ -23,6 +23,8 @@ REGISTRY = Path("registry.json")
 URL = re.compile(r"https?://[^\s<>()\[\]\"']+|\b(?:t\.me|wa\.me|instagram\.com|youtu\.be)/[^\s<>()\[\]\"']+", re.IGNORECASE)
 HANDLE = re.compile(r"(?<![\w/.])@[A-Za-z]\w{3,31}")
 PHONE = re.compile(r"(?<!\d)\+?\d[\d\s\-()]{9,15}\d(?!\d)")
+# t.me/c/ID addresses a chat without a public name: not a link a reader can open.
+PRIVATE_LINK = re.compile(r"t\.me/(c/|\+|joinchat/)", re.IGNORECASE)
 
 
 def _cell(text):
@@ -30,7 +32,8 @@ def _cell(text):
 
 
 def _chat_link(m):
-    return m.get("group_url") or (m.get("message_url") or "").rsplit("/", 1)[0]
+    link = m.get("group_url") or (m.get("message_url") or "").rsplit("/", 1)[0]
+    return "" if PRIVATE_LINK.search(link) else link
 
 
 def _domain(url):
@@ -102,7 +105,7 @@ def facts(out=None):
         "| # | Группа | Ссылка | По теме | С копиями | В пуле |",
         "|---:|---|---|---:|---:|---:|",
         *[
-            f"| {i} | {_cell(c['name'])} | {c['link']} | {c['topic']} | {c['copies']} | {in_pool.get(gid, 0)} |"
+            f"| {i} | {_cell(c['name'])} | {c['link'] or 'нет публичной ссылки'} | {c['topic']} | {c['copies']} | {in_pool.get(gid, 0)} |"
             for i, (gid, c) in enumerate(sorted(chats.items(), key=lambda kv: -kv[1]["topic"]), 1)
         ],
         "",

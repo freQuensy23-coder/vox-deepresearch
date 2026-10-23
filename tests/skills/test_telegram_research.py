@@ -447,3 +447,10 @@ def test_tme_never_points_to_a_private_discussion_chat(tme_pages):
     chain = tme.Tme().thread("https://t.me/vahta_sever/7?comment=503")
     assert chain.index("Кто ездил?") < chain.index("расчёт задержали") < chain.index("▶ #503")
     assert not any("c2356977124" in path for path in fetched)
+
+
+def test_facts_never_link_a_chat_without_a_public_name():
+    put([{**row(1, "2026-03-01", group=-5), "sources": ["keyword:вахта"]}])
+    filtered_file([{**fm(1, "Вахта в закрытом чате", group=-5), "group_url": "https://t.me/c/1001676657599", "message_url": "https://t.me/c/1001676657599/77"}])
+    text = facts.facts()
+    assert "t.me/c/" not in text and "нет публичной ссылки" in text
