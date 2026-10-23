@@ -246,7 +246,10 @@ float filters accept integer or real JSON numbers through `json_value_matches`.
 
 Gate server-owned run context on both client feeds (`body.context` and
 `body.config`): `merge_run_context_overrides` admits it only for `internal=True`,
-while `strip_internal_context_keys` scrubs both destinations. Treat
+while `strip_internal_context_keys` scrubs both destinations. After both,
+`apply_default_interaction_mode` writes the operator's `default_interaction_mode`
+(config.yaml, default `interactive`) into `config['context']` only when no trusted
+caller chose a mode; the embedded `DeerFlowClient` applies the same default. Treat
 `disable_clarification` like `non_interactive`. Before run/state writes,
 `_normalize_input_messages` rejects canonical external system/developer roles;
 only `AUTH_SOURCE_INTERNAL` run input may retain them.

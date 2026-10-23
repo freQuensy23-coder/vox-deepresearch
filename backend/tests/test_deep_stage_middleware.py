@@ -8,7 +8,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
-from deerflow.agents.middlewares.deep_stage_middleware import DEEP_STAGE_TEXT, DeepStageMiddleware
+from deerflow.agents.middlewares.deep_stage_middleware import DEEP_STAGE_HINT, DEEP_STAGE_TEXT, DeepStageMiddleware
 from deerflow.agents.middlewares.recon_watchdog_middleware import ReconWatchdogMiddleware
 from deerflow.agents.thread_state import ThreadDataState
 from deerflow.config.app_config import AppConfig
@@ -101,5 +101,17 @@ def test_agent_graph_goes_on_with_the_deep_stage_request(thread):
     graph = create_agent(model=model, tools=[], middleware=[_ThreadData(), ReconWatchdogMiddleware(idle_seconds=300), DeepStageMiddleware()])
     result = graph.invoke({"messages": [HumanMessage("Как устроен рынок вахтовой работы?")], "thread_data": thread, "recon_last_vox_at": 1.0, "recon_stopped": True}, config={"recursion_limit": 20})
     contents = [(type(m).__name__, m.content) for m in result["messages"]]
-    assert contents[1:] == [("AIMessage", "Отчёт готов."), ("HumanMessage", DEEP_STAGE_TEXT), ("AIMessage", "Глубокий отчёт готов.")]
+    assert contents[1:3] == [("AIMessage", "Отчёт готов."), ("HumanMessage", DEEP_STAGE_TEXT)]
+    assert result["messages"][3].additional_kwargs[DEEP_STAGE_HINT] is True and "SKILL.md" in result["messages"][3].content
+    assert contents[4:] == [("AIMessage", "Глубокий отчёт готов.")]
     assert result["deep_stage_requested"] is True
+
+
+def test_a_deep_stage_request_gets_the_skill_hint_once(thread):
+    middleware = DeepStageMiddleware()
+    asked = {"messages": [HumanMessage(DEEP_STAGE_TEXT)], "thread_data": thread}
+    hint = middleware.before_model(asked, None)["messages"][0]
+    assert hint.additional_kwargs[DEEP_STAGE_HINT] is True and "Глубокое исследование" in hint.content
+    assert middleware.before_model({**asked, "messages": [HumanMessage(DEEP_STAGE_TEXT), hint]}, None) is None
+    assert middleware.before_model({"messages": [HumanMessage(DEEP_STAGE_TEXT)], "thread_data": {"workspace_path": "/nowhere"}}, None) is None
+    assert asyncio.run(middleware.abefore_model(asked, None))["messages"][0].content == hint.content

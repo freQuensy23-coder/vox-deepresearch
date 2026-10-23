@@ -33,6 +33,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
+from deerflow.agents.interaction_policy import apply_default_interaction_mode, resolve_run_interaction_policy
 from deerflow.agents.lead_agent.agent import _authorize_model_name, build_middlewares
 from deerflow.agents.lead_agent.prompt import apply_prompt_template, get_enabled_skills_for_config, has_bash_tool
 from deerflow.agents.middlewares.tool_declarations import layer_one_outcome, narrow_declared_tools, verify_declared_tool_view
@@ -389,6 +390,7 @@ class DeerFlowClient:
             self._checkpoint_snapshot_frequency,
             effective_user_id,
             authorization_identity,
+            cfg.get("interaction_mode"),
         )
 
         if self._agent is not None and self._agent_config_key == key:
@@ -464,7 +466,8 @@ class DeerFlowClient:
         )
         max_total_subagents = effective_total_subagents_per_run(cfg.get("max_total_subagents"), self._app_config)
 
-        tools = self._get_tools(model_name=model_name, subagent_enabled=subagent_enabled, mcp_plugins=mcp_plugins)
+        interaction_policy = resolve_run_interaction_policy({"context": cfg})
+        tools = [tool for tool in self._get_tools(model_name=model_name, subagent_enabled=subagent_enabled, mcp_plugins=mcp_plugins) if tool.name not in interaction_policy.disabled_tool_names]
 
         # Add framework-provided tools before authorization so Layer 1 sees
         # every capability that can become model-visible.
@@ -556,6 +559,7 @@ class DeerFlowClient:
                 skill_names=skill_setup.skill_names or None,
                 subagent_execution_capacity=subagent_execution_capacity,
                 memory_enabled=memory_enabled,
+                interaction_policy=interaction_policy,
                 bash_available=has_bash_tool(authorized_tools),
             ),
             "state_schema": get_thread_state_schema(self._checkpoint_channel_mode, self._checkpoint_snapshot_frequency),
@@ -1051,6 +1055,8 @@ class DeerFlowClient:
         # survives worker/isolated-loop boundaries and matches the identity
         # used by prompt assembly and the agent cache.
         context["user_id"] = effective_user_id
+        # The operator's default mode (config.yaml) applies to embedded runs too.
+        apply_default_interaction_mode({"context": context}, self._app_config)
         self._ensure_agent(config, context=context)
         configurable = config.get("configurable") or {}
         effective_model_name = getattr(self, "_effective_model_name", None)

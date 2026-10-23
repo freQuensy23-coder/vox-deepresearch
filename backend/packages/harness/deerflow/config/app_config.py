@@ -320,6 +320,10 @@ class AppConfig(BaseModel):
     loop_detection: LoopDetectionConfig = Field(default_factory=LoopDetectionConfig, description="Loop detection middleware configuration")
     recon_watchdog: ReconWatchdogConfig = Field(default_factory=ReconWatchdogConfig, description="Reminds the lead agent to keep sending Vox requests during recon")
     deep_stage: DeepStageConfig = Field(default_factory=DeepStageConfig, description="Sends the deep stage request once a Telegram research report is ready")
+    default_interaction_mode: Literal["interactive", "autonomous"] = Field(
+        default="interactive",
+        description="Interaction mode of runs whose trusted entry point chose none; autonomous removes ask_clarification and tells the agent to decide by itself",
+    )
     tool_progress: ToolProgressConfig = Field(default_factory=ToolProgressConfig, description="Tool progress state machine middleware configuration")
     verification: VerificationConfig = Field(default_factory=VerificationConfig, description="Subagent result verification (receipts, checklist, judge)")
     read_before_write: ReadBeforeWriteConfig = Field(default_factory=ReadBeforeWriteConfig, description="Read-before-write file gate middleware configuration")

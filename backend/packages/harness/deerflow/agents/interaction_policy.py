@@ -180,3 +180,25 @@ def resolve_run_interaction_policy(config: Mapping[str, Any] | None) -> RunInter
     if merged.get("disable_clarification"):
         return RunInteractionPolicy(RunInteractionMode.AUTONOMOUS)
     return RunInteractionPolicy.interactive()
+
+
+def apply_default_interaction_mode(config: dict[str, Any], app_config: Any) -> None:
+    """Give a run the operator's default mode (``default_interaction_mode`` in
+    config.yaml) when its trusted entry point chose none.
+
+    An explicit ``interaction_mode`` and the legacy non-interactive hints keep
+    their meaning; only a run that would fall back to interactive is changed,
+    by writing ``interaction_mode`` into ``config['context']``.
+    """
+    default_mode = getattr(app_config, "default_interaction_mode", RunInteractionMode.INTERACTIVE)
+    if not isinstance(default_mode, str) or default_mode == RunInteractionMode.INTERACTIVE:
+        return
+    mode = RunInteractionMode(default_mode)
+    context = config.setdefault("context", {})
+    if not isinstance(context, dict):
+        return
+    if any(isinstance(config.get(section), Mapping) and "interaction_mode" in config[section] for section in ("context", "configurable")):
+        return
+    if resolve_run_interaction_policy(config).mode is not RunInteractionMode.INTERACTIVE:
+        return
+    context["interaction_mode"] = mode.value

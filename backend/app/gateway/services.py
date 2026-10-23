@@ -41,7 +41,7 @@ from app.gateway.run_origin import resolve_request_origin
 from app.gateway.utils import sanitize_log_param
 from app.mcp_tasks.errors import PermanentNotificationError
 from deerflow.agents.human_input import read_human_input_response
-from deerflow.agents.interaction_policy import resolve_run_interaction_policy
+from deerflow.agents.interaction_policy import apply_default_interaction_mode, resolve_run_interaction_policy
 from deerflow.agents.middlewares.dynamic_context_middleware import _DYNAMIC_CONTEXT_REMINDER_KEY, _REMINDER_DATE_KEY
 from deerflow.agents.middlewares.input_sanitization_middleware import frame_untrusted_text
 from deerflow.agents.middlewares.message_utils import _SUMMARY_MESSAGE_NAME, is_genuine_user_message
@@ -1903,6 +1903,8 @@ async def start_run(
             # ``body.config`` is free-form and copied verbatim by
             # ``build_run_config``; scrub internal-only keys smuggled there.
             strip_internal_context_keys(config)
+        # The operator's default mode applies to every run no trusted caller set a mode for.
+        apply_default_interaction_mode(config, run_ctx.app_config or get_app_config())
 
         replay_kind = run_metadata.get("replay_kind")
         target_message_id = run_metadata.get("regenerate_from_message_id")

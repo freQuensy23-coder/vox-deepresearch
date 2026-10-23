@@ -1339,6 +1339,12 @@ recon_watchdog:
 deep_stage:
   enabled: true
 
+# Interaction mode of runs whose trusted entry point chose none (web UI, IM,
+# local-deploy/research.py). autonomous removes ask_clarification: research
+# runs never stop to ask, the agent decides and states its assumptions.
+# The scheduler and webhook channels keep their own modes.
+default_interaction_mode: autonomous
+
 # ============================================================================
 # Loop Detection Configuration
 # ============================================================================

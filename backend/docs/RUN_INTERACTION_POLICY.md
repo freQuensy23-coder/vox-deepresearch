@@ -22,6 +22,12 @@ then `channel_name="github"` (webhook), then `disable_clarification`
 (autonomous); otherwise it selects interactive. These legacy flags remain
 supported while entry points migrate to explicit modes.
 
+The operator can make unattended work the default: `default_interaction_mode`
+in config.yaml (`interactive` or `autonomous`, default `interactive`) is written
+as `interaction_mode` by `apply_default_interaction_mode` into the run context of
+every Gateway and embedded-client run that would otherwise resolve to
+interactive. Explicit modes and the legacy hints above are left as they are.
+
 Sync and async sandbox network approval paths use the same resolved policy.
 Unattended runs deny pending network requests without opening a Human Input
 card. Subagents always deny pending requests, even in an interactive run.

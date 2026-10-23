@@ -1935,6 +1935,7 @@ class TestEnsureAgent:
             10,
             get_effective_user_id(),
             None,
+            None,
         )
 
         config = client._get_runnable_config("t1")
