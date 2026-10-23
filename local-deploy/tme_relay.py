@@ -91,7 +91,8 @@ def upstream_target(target):
     channel = re.fullmatch(rf"/s/({NAME})", parts.path)
     message = re.fullmatch(rf"/({NAME})/({ID})", parts.path)
     name = (channel or message).group(1) if (channel or message) else None
-    if name is None or name.casefold() in RESERVED:
+    # c1234567890 is how t.me pages name a private discussion chat, not a public name.
+    if name is None or name.casefold() in RESERVED or re.fullmatch(r"c\d+", name, re.IGNORECASE):
         raise Rejected(403)
     if channel:
         if not query:

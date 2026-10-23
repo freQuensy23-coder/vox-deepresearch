@@ -35,6 +35,8 @@ import fire
 
 DB = Path("tme.db")
 NAME = r"[A-Za-z][A-Za-z0-9_]{3,31}"
+# t.me pages name a channel's private discussion chat by its internal id (c1234567890).
+PRIVATE = re.compile(r"c\d+", re.IGNORECASE)
 MAX_CHARS = 18000
 WIDTH = 100
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
@@ -83,6 +85,8 @@ def _path(url):
         raise TmeError(f"{url}: a private chat or invite link. Only public chats and channels may be read.")
     if path and path[0] == "s":
         path = path[1:]
+    if path and PRIVATE.fullmatch(path[0]):
+        raise TmeError(f"{url}: a private chat (internal id). Only public chats and channels may be read.")
     if not path or not re.fullmatch(NAME, path[0]):
         raise TmeError(f"{url}: expected a public chat or channel link like https://t.me/NAME/123.")
     return path, urllib.parse.parse_qs(parts.query)
@@ -277,6 +281,12 @@ def get(path):
     return {"status": status, "location": location, **page}
 
 
+def _public(post):
+    """(name, id) of a `name/id` post of a public chat, None for a private one."""
+    link = re.fullmatch(rf"({NAME})/(\d+)", post or "")
+    return (link.group(1), int(link.group(2))) if link and not PRIVATE.fullmatch(link.group(1)) else None
+
+
 def _message(name, mid):
     """One message by its embed page, or None if it is deleted or missing."""
     page = get(f"/{name}/{mid}?embed=1")
@@ -362,11 +372,14 @@ class Tme:
         oldest first, the message itself last."""
         name, mid, comment = parse_url(url)
         if comment is not None:
-            # A comment lives in the channel's discussion chat; follow it there.
+            # A comment lives in the channel's discussion chat: follow it there if
+            # that chat is public, else within the post's public comments.
             posts = [m["post"] for m in get(f"/{name}/{mid}?embed=1&comment={comment}")["messages"] if m.get("post")]
             if not posts:
                 return f"{name}/{mid}?comment={comment}: комментарий удалён или не найден"
-            name, mid = posts[0].split("/")[0], int(posts[0].split("/")[1])
+            if _public(posts[0]) is None:
+                return self._comment_thread(name, mid, comment, int(depth), max_chars)
+            name, mid = _public(posts[0])
         chain, seen, at = [], set(), (name, mid)
         while at and at not in seen and len(chain) <= int(depth):
             seen.add(at)
@@ -375,14 +388,27 @@ class Tme:
                 chain.append((at, None))
                 break
             chain.append((at, message))
-            reply = message.get("reply_to") or ""
-            link = re.fullmatch(rf"({NAME})/(\d+)", reply)
-            at = (link.group(1), int(link.group(2))) if link else None
+            at = _public(message.get("reply_to"))
         blocks = [render(m, n, mark=(n, i) == (name, mid)) if m else f"#{i} в {n} · нет: удалено или не найдено" for (n, i), m in reversed(chain)]
         tail = None
         if chain and chain[-1][1] is not None and (chain[-1][1].get("reply_to") or "").startswith("#"):
             tail = "-- выше по цепочке ответ на комментарий: смотри comments у поста"
         return _blocks(f"{name}/{mid}: цепочка ответов, {len(chain)} сообщ.", blocks, tail, max_chars=max_chars)
+
+    def _comment_thread(self, name, mid, comment, depth, max_chars):
+        """The reply chain of a comment from the post's public comments page."""
+        page = get(f"/{name}/{mid}?embed=1&discussion=1&comments_limit=100")
+        by_id = {m["id"]: m for m in page["messages"]}
+        chain, at = [], comment
+        while at in by_id and at not in [m["id"] for m in chain] and len(chain) <= depth:
+            chain.append(by_id[at])
+            reply = by_id[at].get("reply_to") or ""
+            at = int(reply[1:]) if reply.startswith("#") and reply[1:].isdigit() else None
+        if not chain:
+            return f"{name}/{mid}?comment={comment}: комментария нет среди последних 100 под постом; чат обсуждения закрыт"
+        tail = "-- начало цепочки старше последних 100 комментариев; чат обсуждения закрыт" if at is not None else None
+        blocks = [render(m, name, mark=m["id"] == comment) for m in reversed(chain)]
+        return _blocks(f"{name}/{mid}?comment={comment}: цепочка ответов, {len(chain)} коммент.", blocks, tail, max_chars=max_chars)
 
     def comments(self, url, limit=100, max_chars=MAX_CHARS):
         """The latest LIMIT comments (at most 100) under the channel post at URL,
@@ -398,10 +424,9 @@ class Tme:
         total = re.match(r"(\d+)", page["header"] or "")
         if total and int(total.group(1)) > len(found):
             chat = get(f"/{name}/{mid}?embed=1&comment={found[0]['id']}")
-            posts = [m["post"] for m in chat["messages"] if m.get("post")]
-            where = posts[0].split("/")[0] if posts else None
+            where = next((_public(m.get("post")) for m in chat["messages"] if _public(m.get("post"))), None)
             tail = f"-- показаны последние {len(found)} из {total.group(1)}." + (
-                f" Ранние — в чате обсуждения: tme.py show https://t.me/{where}/{found[0]['id']} --before 20 --after 0" if where else ""
+                f" Ранние — в чате обсуждения: tme.py show https://t.me/{where[0]}/{found[0]['id']} --before 20 --after 0" if where else " Ранние недоступны: чат обсуждения закрыт."
             )
         return _blocks(head, [render(m, name) for m in found], tail, max_chars=max_chars)
 

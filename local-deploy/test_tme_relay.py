@@ -114,6 +114,8 @@ def test_public_pages_are_rebuilt_from_validated_parts(target, upstream_path):
         "http://evil.invalid/s/vahta",
         "/s/vahta%5fsever",
         "/s/abc",
+        "/c2356977124/11415?embed=1",
+        "/s/C2356977124",
     ],
 )
 def test_private_and_unknown_pages_are_refused(target):

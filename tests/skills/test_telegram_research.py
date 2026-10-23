@@ -352,7 +352,7 @@ def test_tme_reads_channel_posts_chat_messages_and_comments():
     assert tme.parse_page(MISSING)[1] is True
 
 
-@pytest.mark.parametrize("url", ["https://t.me/c/1234567/89", "https://t.me/+AbCdEf123", "t.me/joinchat/AbCdEf", "https://example.com/vahta_chat/1", "https://t.me/vahta_chat"])
+@pytest.mark.parametrize("url", ["https://t.me/c/1234567/89", "https://t.me/c2356977124/11415", "https://t.me/+AbCdEf123", "t.me/joinchat/AbCdEf", "https://example.com/vahta_chat/1", "https://t.me/vahta_chat"])
 def test_tme_refuses_private_and_non_message_links(url):
     with pytest.raises(tme.TmeError):
         tme.parse_url(url)
@@ -435,3 +435,15 @@ def test_tme_proxy_advice_reaches_the_agent(monkeypatch):
     monkeypatch.setattr(tme._OPENER, "open", refuse)
     with pytest.raises(tme.TmeError, match="keeps refusing"):
         tme._fetch("/vahta_chat/1?embed=1")
+
+
+def test_tme_never_points_to_a_private_discussion_chat(tme_pages):
+    pages, fetched = tme_pages
+    pages["/vahta_sever/7?embed=1&discussion=1&comments_limit=100"] = tme_discussion("vahta_sever", 7, 250, [(501, None, "Кто ездил?"), (502, 501, "Я, расчёт задержали"), (503, 502, "Подавай в инспекцию")])
+    pages["/vahta_sever/7?embed=1&comment=501"] = tme_embed("c2356977124", 501, "Кто ездил?")
+    pages["/vahta_sever/7?embed=1&comment=503"] = tme_embed("c2356977124", 503, "Подавай в инспекцию", reply=502)
+    shown = tme.Tme().comments("https://t.me/vahta_sever/7")
+    assert "чат обсуждения закрыт" in shown and "c2356977124" not in shown
+    chain = tme.Tme().thread("https://t.me/vahta_sever/7?comment=503")
+    assert chain.index("Кто ездил?") < chain.index("расчёт задержали") < chain.index("▶ #503")
+    assert not any("c2356977124" in path for path in fetched)
