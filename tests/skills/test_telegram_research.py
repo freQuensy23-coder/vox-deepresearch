@@ -1,4 +1,4 @@
-"""Offline contracts for the telegram-research scripts (vox.py, jev.py)."""
+"""Offline contracts for the telegram-research scripts (vox.py, jev.py, read.py, notes.py, facts.py, tme.py)."""
 
 import importlib.util
 import io
@@ -26,6 +26,7 @@ read = load("read")
 notes = load("notes")
 facts = load("facts")
 pool = load("pool")
+tme = load("tme")
 
 
 def row(mid, date, group=-1001, text=None, user=7):
@@ -262,3 +263,175 @@ def test_facts_lists_every_group_with_links_and_counts():
     assert "| Уникальных @-контактов | 1 |" in text and "hh.ru | 1" in text
     assert "+7 900" not in text and "@boss_ivan" not in text
     assert facts.facts(out="report/facts.md").endswith("2 groups") and Path("report/facts.md").exists()
+
+
+# tme.py: synthetic pages shaped like t.me's public widgets (channel listing, message embed, discussion).
+
+
+def tme_channel(name, posts):
+    """/s/NAME listing: POSTS are (id, text) of a channel."""
+    items = "".join(
+        f'<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message js-widget_message" data-post="{name}/{mid}">'
+        f'<div class="tgme_widget_message_bubble"><div class="tgme_widget_message_author accent_color"><a class="tgme_widget_message_owner_name" href="https://t.me/{name}"><span dir="auto">Вахта Север</span></a></div>'
+        f'<div class="tgme_widget_message_photo_wrap"><i class="tgme_widget_message_photo"></i></div>'
+        f'<div class="tgme_widget_message_text js-message_text" dir="auto">{text}</div>'
+        f'<div class="tgme_widget_message_footer"><span class="tgme_widget_message_views">1K</span><span class="tgme_widget_message_meta">'
+        f'<a class="tgme_widget_message_date" href="https://t.me/{name}/{mid}"><time datetime="2026-05-0{mid % 9 + 1}T10:00:00+00:00" class="time">10:00</time></a></span></div></div></div></div>'
+        for mid, text in posts
+    )
+    return f'<html><body><div class="tgme_channel_history js-message_history">{items}</div></body></html>'
+
+
+def tme_embed(name, mid, text, author="Иван", reply=None):
+    """?embed=1 page of one chat message; REPLY is the id it answers."""
+    quote = (
+        f'<a class="tgme_widget_message_reply" href="https://t.me/{name}/{reply}" "><div class="tgme_widget_message_author accent_color">'
+        f'<span class="tgme_widget_message_author_name" dir="auto">Пётр</span></div><div class="tgme_widget_message_text js-message_reply_text" dir="auto">цитата {reply}</div></a>'
+        if reply
+        else ""
+    )
+    return (
+        f'<html><body><div class="tgme_widget_message js-widget_message" data-post="{name}/{mid}"><div class="tgme_widget_message_bubble">'
+        f'<div class="tgme_widget_message_author accent_color"><a class="tgme_widget_message_author_name" href="https://t.me/private_handle"><span dir="auto">{author}</span></a>&nbsp;in&nbsp;'
+        f'<a class="tgme_widget_message_owner_name" href="https://t.me/{name}"><span dir="auto">Чат вахтовиков</span></a></div>{quote}'
+        f'<div class="tgme_widget_message_text js-message_text" dir="auto">{text}</div>'
+        f'<div class="tgme_widget_message_footer"><a class="tgme_widget_message_date" href="https://t.me/{name}/{mid}"><time datetime="2026-05-01T10:0{mid % 10}:00+00:00">May 1</time></a></div>'
+        "</div></div></body></html>"
+    )
+
+
+MISSING = '<html><body><div class="tgme_widget_message"><div class="tgme_widget_message_error" dir="auto">Post not found</div></div></body></html>'
+
+
+def tme_discussion(name, post, total, comments):
+    """?discussion=1 page: the latest COMMENTS (id, reply id or None, text) of TOTAL under NAME/POST."""
+    items = "".join(
+        f'<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message js-widget_message" data-peer="c1_2" data-post-id="{cid}">'
+        f'<div class="tgme_widget_message_bubble"><div class="tgme_widget_message_author accent_color"><span class="tgme_widget_message_author_name"><span dir="auto">Ольга</span></span></div>'
+        + (
+            f'<div class="tgme_widget_message_reply js-reply_to" data-reply-to="{reply}"><div class="tgme_widget_message_author"><span class="tgme_widget_message_author_name">Ян</span></div>'
+            f'<div class="tgme_widget_message_text js-message_reply_text">ответ {reply}</div></div>'
+            if reply
+            else ""
+        )
+        + f'<div class="tgme_widget_message_reply_template js-reply_tpl"><input type="hidden" name="reply_to_id" value="{cid}"><div class="tgme_widget_message_author"><span class="tgme_widget_message_author_name">Ольга</span></div>'
+        f'<div class="tgme_widget_message_text js-message_reply_text">{text}</div></div><div class="tgme_widget_message_text js-message_text" dir="auto">{text}</div>'
+        f'<div class="tgme_widget_message_footer"><a class="tgme_widget_message_date" href="https://t.me/{name}/{post}?comment={cid}"><time datetime="2026-05-02T09:00:00+00:00">May 2</time></a></div></div></div></div>'
+        for cid, reply, text in comments
+    )
+    return f'<html><body><h3 class="tgme_post_discussion_header"><span class="js-header">{total} comments</span> on this post</h3><div class="tgme_post_discussion">{items}</div></body></html>'
+
+
+@pytest.fixture
+def tme_pages(monkeypatch):
+    """Serve PAGES (t.me path -> html, or (status, location)) instead of the proxy; record fetched paths."""
+    pages, fetched = {}, []
+
+    def fake(path):
+        fetched.append(path)
+        page = pages.get(path, MISSING)
+        return (page[0], page[1], "") if isinstance(page, tuple) else (200, None, page)
+
+    monkeypatch.setattr(tme, "_fetch", fake)
+    return pages, fetched
+
+
+def test_tme_reads_channel_posts_chat_messages_and_comments():
+    posts, missing, _ = tme.parse_page(tme_channel("vahta_sever", [(7, "Набор на вахту: 60/30, <b>4500</b> за смену.<br/>Пиши @vahta_hr <a href=\"https://t.me/vahta_hr\">@vahta_hr</a>, подробности <a href=\"https://t.me/vahta_chat/90\">тут</a>")]))
+    assert not missing and posts[0]["id"] == 7 and posts[0]["author"] == "Вахта Север" and posts[0]["media"] == ["фото"]
+    assert posts[0]["text"].startswith("Набор на вахту: 60/30, 4500 за смену.\nПиши")
+    assert "тут <https://t.me/vahta_chat/90>" in posts[0]["text"] and "<https://t.me/vahta_hr>" not in posts[0]["text"]
+    message = tme.parse_page(tme_embed("vahta_chat", 91, "Мне так и не заплатили", reply=90))[0][0]
+    assert message["author"] == "Иван" and message["reply_to"] == "vahta_chat/90" and message["reply_text"] == "цитата 90"
+    assert message["text"] == "Мне так и не заплатили" and "private_handle" not in tme.render(message, "vahta_chat")
+    hidden = tme.parse_page(tme_embed("vahta_chat", 92, "Тоже ждём", author=""))[0][0]
+    assert hidden["author"] == "автор скрыт"
+    comments, _, header = tme.parse_page(tme_discussion("vahta_sever", 7, 3, [(501, None, "Кто ездил?"), (502, 501, "Я, расчёт задержали")]))
+    assert header == "3 comments" and [c["id"] for c in comments] == [501, 502] and comments[1]["reply_to"] == "#501"
+    assert comments[1]["text"] == "Я, расчёт задержали" and comments[1]["url"].endswith("?comment=502")
+    assert tme.parse_page(MISSING)[1] is True
+
+
+@pytest.mark.parametrize("url", ["https://t.me/c/1234567/89", "https://t.me/+AbCdEf123", "t.me/joinchat/AbCdEf", "https://example.com/vahta_chat/1", "https://t.me/vahta_chat"])
+def test_tme_refuses_private_and_non_message_links(url):
+    with pytest.raises(tme.TmeError):
+        tme.parse_url(url)
+
+
+def test_tme_accepts_public_message_links():
+    assert tme.parse_url("https://t.me/vahta_chat/91") == ("vahta_chat", 91, None)
+    assert tme.parse_url("t.me/s/vahta_sever/7") == ("vahta_sever", 7, None)
+    assert tme.parse_url("https://t.me/vahta_chat/12/91") == ("vahta_chat", 91, None)
+    assert tme.parse_url("https://t.me/vahta_sever/7?comment=502") == ("vahta_sever", 7, 502)
+
+
+def test_tme_show_chat_opens_neighbours_once(tme_pages):
+    pages, fetched = tme_pages
+    pages["/s/vahta_chat?before=94"] = (302, "/vahta_chat")
+    for mid in (89, 91, 92):
+        pages[f"/vahta_chat/{mid}?embed=1"] = tme_embed("vahta_chat", mid, f"сообщение {mid}")
+    shown = tme.Tme().show("https://t.me/vahta_chat/91", before=2, after=2)
+    assert shown.startswith("vahta_chat (чат) · #89–#93")
+    assert "▶ #91 · 2026-05-01 10:01 · Иван" in shown and "#90 · нет: удалено" in shown and "сообщение 92" in shown
+    first = len(fetched)
+    assert tme.Tme().show("https://t.me/vahta_chat/91", before=2, after=2) == shown and len(fetched) == first
+    pages["/vahta_chat/94?embed=1"] = tme_embed("vahta_chat", 94, "сообщение 94")
+    tme.Tme().show("https://t.me/vahta_chat/94", before=0, after=0)
+    assert fetched[first:] == ["/vahta_chat/94?embed=1"]  # known chat: no second /s/ probe
+    pages["/s/vahta_chats?before=2"] = tme_channel("vahta_chats", [(1, "канал с похожим именем")])
+    assert "канал с похожим именем" in tme.Tme().show("https://t.me/vahta_chats/1", before=0, after=0)
+
+
+def test_tme_show_channel_scrolls_listing_pages(tme_pages):
+    pages, fetched = tme_pages
+    pages["/s/vahta_sever?before=31"] = tme_channel("vahta_sever", [(i, f"пост {i}") for i in range(11, 31)])
+    pages["/s/vahta_sever?before=11"] = tme_channel("vahta_sever", [(i, f"пост {i}") for i in range(1, 11)])
+    shown = tme.Tme().show("https://t.me/vahta_sever/20", before=12, after=10)
+    assert shown.startswith("vahta_sever (канал) · #8–#30") and "▶ #20" in shown and "пост 8" in shown and "пост 30" in shown and "пост 7" not in shown
+    assert fetched == ["/s/vahta_sever?before=31", "/s/vahta_sever?before=11"]
+
+
+def test_tme_thread_follows_replies_up_to_the_first_message(tme_pages):
+    pages, _ = tme_pages
+    pages["/vahta_chat/95?embed=1"] = tme_embed("vahta_chat", 95, "Суд выиграли", reply=80)
+    pages["/vahta_chat/80?embed=1"] = tme_embed("vahta_chat", 80, "Подали в суд", reply=12)
+    pages["/vahta_chat/12?embed=1"] = tme_embed("vahta_chat", 12, "Нам не платят третий месяц")
+    shown = tme.Tme().thread("https://t.me/vahta_chat/95")
+    assert shown.index("Нам не платят") < shown.index("Подали в суд") < shown.index("Суд выиграли")
+    assert "▶ #95" in shown and "3 сообщ." in shown
+
+
+def test_tme_comments_point_to_the_discussion_chat_for_older_ones(tme_pages):
+    pages, _ = tme_pages
+    pages["/vahta_sever/7?embed=1&discussion=1&comments_limit=100"] = tme_discussion("vahta_sever", 7, 250, [(501, None, "Кто ездил?"), (502, 501, "Я")])
+    pages["/vahta_sever/7?embed=1&comment=501"] = tme_embed("vahta_sever_chat", 501, "Кто ездил?")
+    shown = tme.Tme().comments("https://t.me/vahta_sever/7")
+    assert shown.startswith("vahta_sever/7: 250 comments") and "↩ #501 «ответ 501»" in shown
+    assert "показаны последние 2 из 250" in shown and "tme.py show https://t.me/vahta_sever_chat/501 --before 20" in shown
+
+
+def test_tme_page_says_a_chat_has_no_listing(tme_pages):
+    pages, _ = tme_pages
+    pages["/s/vahta_chat"] = (302, "/vahta_chat")
+    assert "чат, а не канал" in tme.Tme().page("vahta_chat")
+
+
+def test_tme_proxy_is_required_and_local(monkeypatch):
+    monkeypatch.delenv("TME_RELAY_URL", raising=False)
+    with pytest.raises(tme.TmeError, match="TME_RELAY_URL"):
+        tme._relay()
+    monkeypatch.setenv("TME_RELAY_URL", "https://t.me")
+    with pytest.raises(tme.TmeError, match="local"):
+        tme._relay()
+
+
+def test_tme_proxy_advice_reaches_the_agent(monkeypatch):
+    monkeypatch.setenv("TME_RELAY_URL", "http://127.0.0.1:9")
+    body = io.BytesIO(json.dumps({"error": "refused", "message": "t.me keeps refusing requests from this host"}).encode())
+
+    def refuse(request, timeout=None):
+        raise urllib.error.HTTPError(request.full_url, 503, "busy", {}, body)
+
+    monkeypatch.setattr(tme._OPENER, "open", refuse)
+    with pytest.raises(tme.TmeError, match="keeps refusing"):
+        tme._fetch("/vahta_chat/1?embed=1")

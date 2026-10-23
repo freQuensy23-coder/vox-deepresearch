@@ -5,15 +5,15 @@ prod host by hand. The script finds the pod through the RunPod API (its SSH port
 changes on restart), ships the root `.env`, checks out the same commit on the
 pod, installs Node into `.node` and Python deps with `uv sync`, builds the
 frontend (Next standalone), restarts every service with `runpod_native.py`
-(proxy, Gateway, frontend, Vox relay, Jev bridge and Jev gateway) and checks
-their health. Research uses `LocalSandboxProvider` with host Bash enabled; it
+(proxy, Gateway, frontend, Vox relay, t.me relay, Jev bridge and Jev gateway)
+and checks their health. Research uses `LocalSandboxProvider` with host Bash enabled; it
 does not create another container or VM.
 
 ## Configuration
 
 Everything is set in the repository's `config.yaml`: agent limits, the
-`vox_relay` and `jev_bridge` sections, and `sandbox.environment` (the relay and
-bridge URLs the skill scripts use). The proxy config is `runpod-nginx.conf`.
+`vox_relay`, `tme_relay` and `jev_bridge` sections, and `sandbox.environment`
+(the relay and bridge URLs the skill scripts use). The proxy config is `runpod-nginx.conf`.
 
 Secrets are the only thing outside git, and all of them are in the single
 repository-root `.env`: `VOX_API_KEY` (Vox relay), `JEV_GATEWAY_API_KEY` (Jev
@@ -38,3 +38,15 @@ retry deadline. A call exceeding it means the query is too heavy. See [the proxy
 The Jev client and bridge forward optional batch policy unchanged. Omitting it
 uses the gateway's own defaults; the research system adds no free-only policy,
 batch concurrency setting, or question/criteria size restrictions.
+
+The t.me relay (`tme_relay.py`) serves the deep stage: once the first report is
+ready, `deep_stage` in `config.yaml` sends the thread «Теперь сделай более
+глубокое исследование», and `tme.py` opens public t.me pages through the relay.
+It forwards only public chat and channel pages (a channel's post listing, one
+message, one comment, the latest comments of a post), never `t.me/c/…` or invite
+links, and sends no cookies or Telegram session. Every research thread on the
+host shares its pace: one request at a time, `interval_seconds` apart. A refusal
+from t.me (429, 403, 5xx, network error) pauses all requests (Retry-After or a
+doubling backoff up to `backoff_max_seconds`) and retries; after
+`give_up_seconds` of refusals the request fails and the agent is told to do
+other work.

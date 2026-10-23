@@ -71,7 +71,7 @@ python3 local-deploy/runpod_native.py
 REMOTE
 
 echo "deploy: checking health"
-remote "for port in 8083/health 8084/v1/models 18791/healthz 18091/health 3000/ 8000/; do
+remote "for port in 8083/health 8085/health 8084/v1/models 18791/healthz 18091/health 3000/ 8000/; do
     for i in \$(seq 1 180); do curl -fsS -o /dev/null http://127.0.0.1:\$port && break; sleep 1; done
     curl -fsS -o /dev/null http://127.0.0.1:\$port && echo \"ok \$port\" || { echo \"FAILED \$port\"; exit 1; }
 done"

@@ -33,6 +33,7 @@ def drop_to_gateway_user():
 
 services = {
     "vox-relay": ([python, "local-deploy/vox_relay.py"], source, env, None),
+    "tme-relay": ([python, "local-deploy/tme_relay.py"], source, env, None),
     "jev-gateway": ([python, "-m", "jev_gateway"], source / "jev-gateway", env, None),
     "jev-bridge": ([python, "local-deploy/jev_bridge.py"], source, env, None),
     "gateway": (

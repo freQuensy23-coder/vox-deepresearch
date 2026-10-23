@@ -6,6 +6,8 @@ This is the source of truth for repository agent guidance; `CLAUDE.md` imports i
 
 **Vox:** all Vox access goes through exactly one fire-based CLI, `skills/public/telegram-research/scripts/vox.py`, which calls only our Vox proxy (`local-deploy/vox_relay.py`, rate limiting) — no other Vox scripts or clients.
 
+**t.me:** the deep stage reads public t.me web pages only through `skills/public/telegram-research/scripts/tme.py`, which calls only our t.me proxy (`local-deploy/tme_relay.py`: public chat/channel pages, one pace for the host, shared backoff) — no Telegram account, session or private chats.
+
 This **monorepo orientation layer** maps the repo. For module details, read its guide:
 
 - **[backend/AGENTS.md](backend/AGENTS.md)** — backend depth: harness/app split, agent &
@@ -216,6 +218,7 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 - Backend work → **[backend/AGENTS.md](backend/AGENTS.md)**
 - Native research execution → **[local-deploy/README.md](local-deploy/README.md)**; local processes without another VM or container.
 - Vox proxy (one FIFO request, internal retries, per-call timeout) → **[local-deploy/VOX_PROXY.md](local-deploy/VOX_PROXY.md)**.
+- t.me proxy for the deep stage (public pages only, one pace, shared backoff) → **[local-deploy/README.md](local-deploy/README.md)**.
 - Frontend work → **[frontend/AGENTS.md](frontend/AGENTS.md)**
 - Setup & install → **[Install.md](Install.md)**, **[CONTRIBUTING.md](CONTRIBUTING.md)**
 - Project overview & usage → **[README.md](README.md)** (translations: `README_zh.md`,

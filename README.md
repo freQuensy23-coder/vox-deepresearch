@@ -11,15 +11,27 @@ new keywords, the other picks 5–25 whales (topic leaders) into `registry.json`
 The whales' messages in public chats join the pool, and the rounds repeat. The
 agent chooses keywords, the Jev instruction and when to stop.
 
+**Deep stage.** Once the first report (`outputs/report.md`) is ready, the
+thread automatically gets the message «Теперь сделай более глубокое
+исследование». One subagent per report section follows the report's messages
+into the stories they belong to (the surrounding conversation, the reply chain,
+comments under a channel post, linked public posts) on public t.me pages, and
+rewrites its section around those stories. The result is a separate
+`outputs/deep-report.md`; the first report stays as it was.
+
 **Tools.** `skills/public/telegram-research/scripts/vox.py` is the only Vox
 client; `scripts/jev.py` talks to the Jev bridge. The proxy lets through only
-two Vox APIs: text search and a user's messages in public chats.
+three Vox APIs: text search, a user's messages in public chats and a group's
+latest posts. `scripts/tme.py` reads public t.me pages for the deep stage.
 
 **Services**, all configured in `config.yaml` with secrets in the root `.env`:
 
 - [Vox proxy](local-deploy/VOX_PROXY.md) (`local-deploy/vox_relay.py`): one
   request to Vox at a time (FIFO), internal retries, only complete responses;
   a single Vox call over 250 seconds returns an error: the query is too heavy.
+- t.me proxy (`local-deploy/tme_relay.py`): public t.me web pages only, no
+  Telegram account; one request pace for every research on the host, and a
+  shared backoff when t.me refuses.
 - Jev gateway (`jev-gateway/`) and Jev bridge (`local-deploy/jev_bridge.py`).
 - DeerFlow Gateway and frontend. `make dev` starts everything locally.
 

@@ -20,6 +20,7 @@ from deerflow.config.channel_connections_config import ChannelConnectionsConfig
 from deerflow.config.checkpointer_config import CheckpointerConfig, load_checkpointer_config_from_dict
 from deerflow.config.database_config import DatabaseConfig
 from deerflow.config.dedupe_storage_config import DedupeStorageConfig
+from deerflow.config.deep_stage_config import DeepStageConfig
 from deerflow.config.deployment_config import DeploymentConfig
 from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_config
 from deerflow.config.file_signature import ConfigSignature as _ConfigSignature
@@ -318,6 +319,7 @@ class AppConfig(BaseModel):
     )
     loop_detection: LoopDetectionConfig = Field(default_factory=LoopDetectionConfig, description="Loop detection middleware configuration")
     recon_watchdog: ReconWatchdogConfig = Field(default_factory=ReconWatchdogConfig, description="Reminds the lead agent to keep sending Vox requests during recon")
+    deep_stage: DeepStageConfig = Field(default_factory=DeepStageConfig, description="Sends the deep stage request once a Telegram research report is ready")
     tool_progress: ToolProgressConfig = Field(default_factory=ToolProgressConfig, description="Tool progress state machine middleware configuration")
     verification: VerificationConfig = Field(default_factory=VerificationConfig, description="Subagent result verification (receipts, checklist, judge)")
     read_before_write: ReadBeforeWriteConfig = Field(default_factory=ReadBeforeWriteConfig, description="Read-before-write file gate middleware configuration")

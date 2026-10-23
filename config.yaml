@@ -1328,6 +1328,18 @@ recon_watchdog:
   idle_seconds: 300
 
 # ============================================================================
+# Deep Stage
+# ============================================================================
+# Once a Telegram research has its first report (outputs/report.md next to
+# workspace/research/messages_filtered.json) and the lead agent ends its turn,
+# the thread gets the user message «Теперь сделай более глубокое исследование»,
+# once per thread. The skill's deep stage then reconstructs whole stories from
+# public t.me pages (tme.py through tme_relay).
+
+deep_stage:
+  enabled: true
+
+# ============================================================================
 # Loop Detection Configuration
 # ============================================================================
 # Detect and interrupt repeated identical tool-call loops.
@@ -1564,6 +1576,7 @@ sandbox:
   environment:
     VOX_RELAY_URL: http://127.0.0.1:8083
     JEV_URL: http://127.0.0.1:8084
+    TME_RELAY_URL: http://127.0.0.1:8085
 
 # Option 2: Container-based AIO Sandbox
 # Executes commands in isolated containers (Docker or Apple Container)
@@ -1817,6 +1830,22 @@ vox_relay:
   call_timeout: 250
   queue_limit: 100
   state_dir: backend/.deer-flow/vox-relay
+
+# t.me proxy (local-deploy/tme_relay.py) for the deep stage: public t.me web pages
+# only, without a Telegram account. Every research thread on the host shares one
+# pace: requests go one at a time, at least interval_seconds apart. When t.me
+# refuses (429, 403, 5xx, network error) every request waits (Retry-After, else a
+# backoff doubling from backoff_seconds to backoff_max_seconds) and the refused
+# one is retried; past give_up_seconds of refusals the agent is told to do other
+# work. call_timeout_seconds bounds one call; queue_limit caps waiting requests.
+tme_relay:
+  port: 8085
+  interval_seconds: 1
+  backoff_seconds: 30
+  backoff_max_seconds: 600
+  give_up_seconds: 1800
+  call_timeout_seconds: 30
+  queue_limit: 100
 
 # Jev bridge (local-deploy/jev_bridge.py): holds JEV_GATEWAY_API_KEY from .env and forwards
 # validated requests from skill scripts to the Jev gateway.
