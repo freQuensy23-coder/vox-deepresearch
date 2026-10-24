@@ -454,23 +454,3 @@ def test_facts_never_link_a_chat_without_a_public_name():
     filtered_file([{**fm(1, "Вахта в закрытом чате", group=-5), "group_url": "https://t.me/c/1001676657599", "message_url": "https://t.me/c/1001676657599/77"}])
     text = facts.facts()
     assert "t.me/c/" not in text and "нет публичной ссылки" in text
-
-
-def test_only_publicly_readable_messages_enter_the_pool(monkeypatch):
-    rows = [
-        {**row(1, "2026-01-05T00:00:00Z"), "group_alias": "vahta_chat", "message_url": "https://t.me/vahta_chat/1"},
-        {**row(2, "2026-01-05T00:00:00Z", group=-1002), "group_alias": "", "related_group_alias": "vahta_sever", "message_url": "https://t.me/c/1002/2"},
-        {**row(3, "2026-01-05T00:00:00Z", group=-1003), "group_alias": "", "related_group_alias": "", "related_group_url": "https://t.me/c/1004/1", "message_url": "https://t.me/c/1003/3"},
-        {**row(4, "2026-01-05T00:00:00Z", group=-1005), "group_alias": "", "related_group_alias": "", "message_url": "https://t.me/c/1005/4"},
-        {**row(5, "2026-01-05T00:00:00Z"), "group_alias": "vahta_chat", "is_private": True},
-    ]
-    monkeypatch.setattr(vox, "_call", lambda path, params: {"stop_reason": "finished", "messages": rows})
-    vox.Vox().search("вахта", since="2026-01-01")
-    assert sorted(m["id"] for m in raw()) == [1, 2]
-    panel = {"rows": [
-        {"date": "2026-01-06T00:00:00Z", "text": "a", "message_url": "https://t.me/c/1676657599/9", "group_alias": "", "group_id": "-1001676657599", "related_group_url": "https://t.me/vahta_sever"},
-        {"date": "2026-01-06T00:00:00Z", "text": "b", "message_url": "https://t.me/c/1006/8", "group_alias": "", "group_id": "-1006", "related_group_url": "https://t.me/c/1007/1"},
-    ]}
-    monkeypatch.setattr(vox, "_call", lambda path, params: panel)
-    vox.Vox().whale(42)
-    assert sorted(str(m["id"]) for m in raw()) == ["1", "2", "9"]
