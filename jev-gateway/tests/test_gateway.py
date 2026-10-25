@@ -328,3 +328,18 @@ async def test_batch_restart_preserves_completed_and_recovers_running(tmp_path):
         assert (await completed(client, created["id"]))["completed"] == 2
         assert calls.count({"message": "hello"}) == 1
         assert calls.count("block") == 2
+
+
+@pytest.mark.asyncio
+async def test_upstream_billing_fields_are_accepted_and_not_passed_on(tmp_path):
+    def handler(request):
+        if json.loads(request.content)["model"] == "jev-1.13-free":
+            return httpx.Response(429, content=json.dumps({"type": "error", "error": {"type": "FreeUsageLimitError"}}))
+        result = answer(BODY)
+        result["usage"].update(cost=0.00001302, opencode={"billing_source": "balance", "list_cost": 0.00001302, "tokens": {"input": 5, "output": 2}})
+        return httpx.Response(200, content=json.dumps(result))
+    async with service(tmp_path, handler) as (client, app):
+        response = await client.post("/v1/systemone", json=BODY)
+        assert response.status_code == 200
+        assert response.json()["usage"] == {"input_tokens": 5, "output_tokens": 2}
+        assert "opencode" not in response.text and "cost" not in response.text

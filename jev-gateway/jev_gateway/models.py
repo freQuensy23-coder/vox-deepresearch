@@ -134,6 +134,9 @@ Answer = Annotated[NoulAnswer | ChoiceAnswer | ScoreAnswer, Field(discriminator=
 
 
 class Usage(ResponseModel):
+    # The upstream adds its own billing fields (cost, opencode); only the token counts are ours.
+    model_config = ConfigDict(extra="ignore", strict=True, allow_inf_nan=False)
+
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
 
@@ -169,4 +172,4 @@ def validate_response(raw, request):
                 raise ValueError("Score keys mismatch")
             if not 0 <= result.score <= len(question.criteria) - 1:
                 raise ValueError("Score out of range")
-    return dict(raw, model="jev-1.13.0")
+    return dict(raw, model="jev-1.13.0", usage=response.usage.model_dump())
