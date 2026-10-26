@@ -24,8 +24,8 @@ class Settings(BaseModel):
     upstream_key: str = Field(min_length=1, repr=False)
     api_key: str = Field(min_length=1, repr=False)
     database: str
-    cooldown_seconds: float = Field(default=300, gt=0)
-    retry_after_max_seconds: float = Field(default=3600, ge=0)
+    upstream_url: str = Field(pattern=r"^https://")
+    deployment: str = Field(min_length=1)
     upstream_timeout_seconds: float = Field(default=120, gt=0)
     upstream_concurrency: int = Field(default=8, ge=1, le=128)
     max_body_bytes: int = Field(default=16777216, ge=1)
@@ -35,7 +35,6 @@ class Settings(BaseModel):
     batch_workers: int = Field(default=8, ge=1, le=64)
     retry_interval: float = Field(default=1, gt=0)
     batch_attempts: int = Field(default=10, ge=1, le=100)
-    session_id: str = ""
     model_release_date: str = ""
 
     @field_validator("upstream_key", "api_key")
@@ -51,7 +50,7 @@ class Settings(BaseModel):
         values = {key: value for key, value in config_section().items() if key != "port"}
         values["database"] = str(REPO_ROOT / values["database"])
         load_dotenv(REPO_ROOT / ".env", override=False)
-        return cls(upstream_key=os.environ.get("OPENCODE_GO_SUBSCRIPTION_KEY", ""), api_key=os.environ.get("JEV_GATEWAY_API_KEY", ""), **values)
+        return cls(upstream_key=os.environ.get("AZURE_DECISION_API_KEY", ""), api_key=os.environ.get("JEV_GATEWAY_API_KEY", ""), **values)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -94,7 +93,7 @@ class BoundaryMiddleware:
         await self.app(scope, replay, send)
 
 
-def create_app(settings=None, upstream_client=None, clock=None):
+def create_app(settings=None, upstream_client=None):
     settings = settings or Settings.from_config()
     bearer = HTTPBearer(auto_error=False)
 
@@ -110,7 +109,7 @@ def create_app(settings=None, upstream_client=None, clock=None):
         runner = None
         try:
             store = await asyncio.to_thread(Store, settings.database, settings.queue_limit)
-            router = Router(settings, client, **({"clock": clock} if clock else {}))
+            router = Router(settings, client)
             runner = BatchRunner(store, router, settings)
             app.state.store = store
             app.state.gateway = router

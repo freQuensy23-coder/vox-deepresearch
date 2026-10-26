@@ -32,7 +32,9 @@ latest posts. `scripts/tme.py` reads public t.me pages for the deep stage.
 - t.me proxy (`local-deploy/tme_relay.py`): public t.me web pages only, no
   Telegram account; one request pace for every research on the host, and a
   shared backoff when t.me refuses.
-- Jev gateway (`jev-gateway/`) and Jev bridge (`local-deploy/jev_bridge.py`).
+- Jev gateway (`jev-gateway/`), answered by a Microsoft-Decision-1 deployment in
+  Microsoft Foundry (same System One contract), and Jev bridge
+  (`local-deploy/jev_bridge.py`).
 - DeerFlow Gateway and frontend. `make dev` starts everything locally.
 
 **Production** is deployed only with `scripts/deploy-prod.sh` from the pushed

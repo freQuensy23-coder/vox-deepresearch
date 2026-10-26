@@ -1,6 +1,6 @@
 # Jev local gateway
 
-Python 3.11+ gateway exposing the Jev System One protocol and a durable asynchronous batch extension. The bundled launcher binds **127.0.0.1** on `jev_gateway.port` from the repository `config.yaml` with exactly one server worker. Do not expose it publicly or start additional ASGI workers.
+Python 3.11+ gateway exposing the Jev System One protocol and a durable asynchronous batch extension. Every call is answered by a Microsoft-Decision-1 deployment in Microsoft Foundry, which speaks the same System One contract. The bundled launcher binds **127.0.0.1** on `jev_gateway.port` from the repository `config.yaml` with exactly one server worker. Do not expose it publicly or start additional ASGI workers.
 
 ## Install and run
 
@@ -8,7 +8,7 @@ Python 3.11+ gateway exposing the Jev System One protocol and a durable asynchro
 python -m jev_gateway   # from jev-gateway/, with the backend virtualenv
 ```
 
-Settings come from the `jev_gateway` section of the repository `config.yaml`; keys come from the repository `.env`, which must provide `JEV_GATEWAY_API_KEY` and `OPENCODE_GO_SUBSCRIPTION_KEY`. Empty or whitespace-only keys fail startup. Consumers use only the local key, never the upstream key.
+Settings come from the `jev_gateway` section of the repository `config.yaml`; keys come from the repository `.env`, which must provide `JEV_GATEWAY_API_KEY` and `AZURE_DECISION_API_KEY` (the Foundry resource key). Empty or whitespace-only keys fail startup. Consumers use only the local key, never the upstream key.
 
 With the official Python SDK 0.7.4, `base_url` is the server root, **not** a URL ending in `/v1`:
 
@@ -57,17 +57,15 @@ The authoritative request-schema snapshot supplied for this implementation is `t
 - `GET /v1/batches/{id}/results?offset=0&limit=100`: `{results:[{custom_id,status_code,response,error}],offset,limit,has_more,total}`. Limit 1–1000. **All item slots** are returned in original request order, including pending slots with null status/response/error. Total is always the complete item count, so page positions do not shift while items finish. Successful slots contain a normal System One response; failed/cancelled slots contain a generic error. Invalid offsets/limits return 422; unknown IDs return 404.
 - `DELETE /v1/batches/{id}`: durable cancellation, stops further submissions and cancels local in-flight tasks. Completed/failed results are retained; unfinished slots get status 499 and a cancellation error. A request already submitted upstream cannot be recalled, and may still complete or incur a charge there.
 
-Batch items route exactly like online calls (see Operator routing): nothing waits for the free route.
+Batch items go upstream exactly like online calls (see Upstream).
 
 Requests, ordering, policy, cancellation and terminal results persist in SQLite. Startup recovers `running` items to `queued`; completed items are not rerun. Recovery is **at least once**: a crash after upstream completion but before the database commit may repeat that item and its cost. Fixed worker tasks avoid one task per queued item. Global and per-batch concurrency are both enforced. Pending queue and batch admission are bounded; 429 indicates full queue. Completed data is retained indefinitely; arrange operator retention/backups according to data sensitivity and disk capacity.
 
 SQLite operations run off the event loop. Database directory is 0700 and database file 0600. A process-level lock rejects a second owner of the same database. The database stores requests/results, not gateway credentials; it is not encrypted at rest. Use a dedicated private directory.
 
-## Operator routing
+## Upstream
 
-The upstream endpoint is fixed to `https://opencode.ai/zen/v1/systemone`. Route order is `jev-1.13-free`, then `jev-1.13`; those identifiers never appear in API responses. The gateway sends an honest `User-Agent: Jev-Local-Gateway/1.0` and a stable `x-opencode-session` identifier. Set an explicit session ID to keep it stable across process restarts; otherwise it is generated once per startup.
-
-Every preferred-route failure other than 400/422, including auth errors, malformed 200s, network failures and timeouts, enters a local cooldown. Default cooldown is 300 seconds. Every call during cooldown, online or batch, goes directly to the alternate route. On expiration exactly one half-open preferred-route probe is admitted, without holding the routing lock during I/O; other calls keep using the alternate route. A successful probe restores the preferred route; failure extends cooldown. Retry-After numeric/date values are bounded; invalid/non-finite headers are ignored. Cooldown is a local retry decision, **not a claim of upstream quota reset**, and is in-memory only across restart.
+Every call, online or batch, is a POST to `upstream_url` (the Foundry resource's `/providers/microsoft/v1/systemone`) with `model` set to the deployment name `deployment` and the key in the `api-key` header. Neither the deployment, the provider nor the upstream host appears in API responses; responses always report `jev-1.13.0`. The gateway sends an honest `User-Agent: Jev-Local-Gateway/1.0`. A failed call keeps its upstream status (malformed responses, network failures and timeouts become 502) and returns a generic error; batch items retry 429 and 5xx with a doubling pause.
 
 The shared HTTPX client is created and closed by lifespan; redirect following and environment proxies are disabled. Both HTTPX timeouts and a total per-attempt deadline apply. Gateway code never logs request bodies or keys; the bundled launcher disables access logs.
 
@@ -79,8 +77,8 @@ The shared HTTPX client is created and closed by lifespan; redirect following an
 |---|---|
 | `port` | Loopback port |
 | `database` | Private queue database: absolute, or relative to the repository root. Keep it on a local disk: every batch item commits twice |
-| `cooldown_seconds` | Preferred-route local cooldown |
-| `retry_after_max_seconds` | Maximum upstream Retry-After extension; configured cooldown remains the floor |
+| `upstream_url` | The Foundry resource's System One endpoint (`https://…/providers/microsoft/v1/systemone`) |
+| `deployment` | Microsoft-Decision-1 deployment name sent as `model` |
 | `upstream_timeout_seconds` | HTTPX and total per-attempt deadline |
 | `upstream_concurrency` | Shared online/batch upstream concurrency cap |
 | `max_body_bytes` | Wire request-body byte cap |
@@ -90,7 +88,6 @@ The shared HTTPX client is created and closed by lifespan; redirect following an
 | `batch_workers` | Fixed batch worker count |
 | `retry_interval` | Batch poll interval and first retry pause in seconds |
 | `batch_attempts` | Attempts per batch item on 429/5xx, pause doubling from `retry_interval` up to 60 s |
-| `session_id` | Explicit stable upstream session ID (empty = generated per process) |
 | `model_release_date` | Verified metadata date, if known |
 
 ## Testing and injection
@@ -102,4 +99,4 @@ The shared HTTPX client is created and closed by lifespan; redirect following an
 
 All bundled tests use **synthetic HTTPX transport and ASGI fixtures**, including the real official SDK parser/client with an ASGI transport adapter. They do not use live credentials or claim live provider E2E coverage. No service was deployed by this implementation.
 
-`jev_gateway.app.create_app(settings=None, upstream_client=None, clock=None)` is the ASGI factory. Omitted settings load the environment through `Settings.from_env()`. Inject a `Settings` instance and an `httpx.AsyncClient` for isolated routing fault injection; injected clients remain caller-owned and are not closed by the gateway. `clock` optionally supplies a monotonic callable for cooldown testing. Lifespan exposes `app.state.gateway`, `app.state.store` and `app.state.batch_runner` for operator/test diagnostics; none are consumer endpoints. Batch persisted deadlines use epoch time.
+`jev_gateway.app.create_app(settings=None, upstream_client=None)` is the ASGI factory. Omitted settings load the repository config through `Settings.from_config()`. Inject a `Settings` instance and an `httpx.AsyncClient` for isolated upstream fault injection; injected clients remain caller-owned and are not closed by the gateway. Lifespan exposes `app.state.gateway`, `app.state.store` and `app.state.batch_runner` for operator/test diagnostics; none are consumer endpoints. Batch persisted deadlines use epoch time.

@@ -1858,16 +1858,18 @@ tme_relay:
 jev_bridge:
   port: 8084
 
-# Jev gateway (jev-gateway/): Jev System One API and durable batches. Keys
-# JEV_GATEWAY_API_KEY and OPENCODE_GO_SUBSCRIPTION_KEY come from .env.
+# Jev gateway (jev-gateway/): Jev System One API and durable batches, answered by
+# the Microsoft-Decision-1 deployment `deployment` at `upstream_url` (Microsoft
+# Foundry, same System One contract). Keys JEV_GATEWAY_API_KEY (local) and
+# AZURE_DECISION_API_KEY (the Foundry resource) come from .env.
 # The queue lives on local disk: every item commits twice, and a commit on the
 # pod's network /workspace takes ~50 ms (0.3 ms locally), capping batches at ~10/s.
 # A pod restart drops unfinished batches; jev.py scores are cached, rerun filter.
 jev_gateway:
   port: 18791
   database: /tmp/jev-gateway/gateway.sqlite3
-  cooldown_seconds: 300
-  retry_after_max_seconds: 3600
+  upstream_url: https://alexeym-4644-resource.services.ai.azure.com/providers/microsoft/v1/systemone
+  deployment: decision-1
   upstream_timeout_seconds: 120
   upstream_concurrency: 64
   max_body_bytes: 16777216
@@ -1877,7 +1879,6 @@ jev_gateway:
   batch_workers: 64
   retry_interval: 1
   batch_attempts: 10
-  session_id: ""
   model_release_date: ""
 
 subagent_runtime:

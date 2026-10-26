@@ -17,7 +17,8 @@ Everything is set in the repository's `config.yaml`: agent limits, the
 
 Secrets are the only thing outside git, and all of them are in the single
 repository-root `.env`: `VOX_API_KEY` (Vox relay), `JEV_GATEWAY_API_KEY` (Jev
-bridge and gateway) and the Jev gateway's provider keys. The Codex login is the
+bridge and gateway) and `AZURE_DECISION_API_KEY` (the Microsoft Foundry key the
+Jev gateway uses for its Microsoft-Decision-1 deployment). The Codex login is the
 service user's `~/.codex/auth.json`.
 
 The lead and depth prompts tell agents to write only inside their assigned

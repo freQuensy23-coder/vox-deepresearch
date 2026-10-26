@@ -35,8 +35,6 @@ async def test_openapi_consumer_surface_hides_implementation(tmp_path):
     async with service(tmp_path, lambda r: httpx.Response(500)) as (client, app):
         schema = (await client.get("/openapi.json")).json()
         encoded = json.dumps(schema).lower()
-        assert "opencode" not in encoded
-        assert "jev-1.13-free" not in encoded
-        assert "subscription" not in encoded
+        assert not any(leak in encoded for leak in ["microsoft", "azure", "decision-1", "api-key"])
         assert schema["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
         assert schema["paths"]["/v1/systemone"]["post"]["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/SystemOneResponse"}

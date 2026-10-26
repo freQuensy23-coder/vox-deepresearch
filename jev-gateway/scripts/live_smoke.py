@@ -23,7 +23,7 @@ body = {
 
 def clean(data):
     text = json.dumps(data).lower()
-    assert "opencode" not in text and "jev-1.13-free" not in text
+    assert not any(leak in text for leak in ("microsoft", "azure", Settings.from_config().deployment))
     assert key not in text
 
 

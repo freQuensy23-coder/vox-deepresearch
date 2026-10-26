@@ -134,7 +134,7 @@ Answer = Annotated[NoulAnswer | ChoiceAnswer | ScoreAnswer, Field(discriminator=
 
 
 class Usage(ResponseModel):
-    # The upstream adds its own billing fields (cost, opencode); only the token counts are ours.
+    # An upstream may add its own billing fields; only the token counts are passed on.
     model_config = ConfigDict(extra="ignore", strict=True, allow_inf_nan=False)
 
     input_tokens: int = Field(ge=0)

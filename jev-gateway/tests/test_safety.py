@@ -4,22 +4,20 @@ import json
 import httpx
 import pytest
 
-from test_gateway import BODY, answer, batch, completed, service
+from test_gateway import BODY, LEAKS, answer, batch, completed, service
 
 
 @pytest.mark.asyncio
-async def test_total_timeout_falls_back(tmp_path):
+async def test_total_timeout_is_502(tmp_path):
     calls = []
     async def handler(request):
-        body = json.loads(request.content)
-        calls.append(body["model"])
-        if body["model"].endswith("free"):
-            await asyncio.sleep(0.08)
-        return httpx.Response(200, json=answer(body))
+        calls.append(request)
+        await asyncio.sleep(0.08)
+        return httpx.Response(200, json=answer(json.loads(request.content)))
     async with service(tmp_path, handler, upstream_timeout_seconds=0.01) as (client, app):
         response = await client.post("/v1/systemone", json=BODY)
-        assert response.status_code == 200
-        assert calls == ["jev-1.13-free", "jev-1.13"]
+        assert response.status_code == 502
+        assert len(calls) == 1
 
 
 def test_entrypoint_enforces_localhost_single_worker(monkeypatch):
@@ -33,61 +31,19 @@ def test_entrypoint_enforces_localhost_single_worker(monkeypatch):
 def test_blank_keys_are_rejected():
     from jev_gateway.app import Settings
     from pydantic import ValidationError
-    for key in ["api_key", "upstream_key"]:
-        values = {"api_key": "test", "upstream_key": "test"}
-        values[key] = " "
+    valid = {"api_key": "test", "upstream_key": "test", "database": "jobs.db", "upstream_url": "https://decision.invalid/systemone", "deployment": "decision-1"}
+    Settings(**valid)
+    for key in ["api_key", "upstream_key", "deployment"]:
         with pytest.raises(ValidationError):
-            Settings(**values)
+            Settings(**dict(valid, **{key: " " if key != "deployment" else ""}))
+    with pytest.raises(ValidationError):
+        Settings(**dict(valid, upstream_url="http://decision.invalid/systemone"))
 
 
 @pytest.mark.asyncio
 async def test_release_date_not_invented(tmp_path):
     async with service(tmp_path, lambda r: httpx.Response(500)) as (client, app):
         assert all(m["release_date"] == "" for m in (await client.get("/v1/models")).json()["models"])
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("header", ["9999999999999999999999999", "NaN", "Infinity", "invalid"])
-async def test_retry_after_is_bounded(tmp_path, header):
-    def handler(request):
-        body = json.loads(request.content)
-        if body["model"].endswith("free"):
-            return httpx.Response(429, headers={"Retry-After": header})
-        return httpx.Response(200, json=answer(body))
-    async with service(tmp_path, handler, cooldown_seconds=0.01, retry_after_max_seconds=0.03) as (client, app):
-        assert (await client.post("/v1/systemone", json=BODY)).status_code == 200
-        delay = app.state.gateway.delay(header)
-        assert 0 < delay <= 0.03
-        assert app.state.gateway.cool_until > 0
-
-
-@pytest.mark.asyncio
-async def test_cancelled_half_open_probe_is_released(tmp_path):
-    entered = asyncio.Event()
-    count = 0
-    async def handler(request):
-        nonlocal count
-        body = json.loads(request.content)
-        if body["model"].endswith("free"):
-            count += 1
-            if count == 1:
-                return httpx.Response(429)
-            if count == 2:
-                entered.set()
-                await asyncio.Event().wait()
-        return httpx.Response(200, json=answer(body))
-    async with service(tmp_path, handler, cooldown_seconds=0.01) as (client, app):
-        await client.post("/v1/systemone", json=BODY)
-        await asyncio.sleep(0.02)
-        task = asyncio.create_task(client.post("/v1/systemone", json=BODY))
-        await asyncio.wait_for(entered.wait(), 1)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        await asyncio.sleep(0.02)
-        assert (await client.post("/v1/systemone", json=BODY)).status_code == 200
-        assert count == 3
-        assert app.state.gateway.cool_until == 0
 
 
 @pytest.mark.asyncio
@@ -110,8 +66,8 @@ async def test_cancel_batch_inflight_does_not_submit_followups(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_batch_paid_failure_is_durable_sanitized(tmp_path):
-    async with service(tmp_path, lambda r: httpx.Response(402, text="opencode free synthetic-upstream")) as (client, app):
+async def test_batch_upstream_failure_is_durable_sanitized(tmp_path):
+    async with service(tmp_path, lambda r: httpx.Response(402, text="Microsoft decision-1 at decision.invalid: synthetic-upstream out of funds")) as (client, app):
         created = (await client.post("/v1/batches", json=batch(1))).json()
         assert (await completed(client, created["id"]))["failed"] == 1
         response = await client.get(f'/v1/batches/{created["id"]}/results')
@@ -119,14 +75,14 @@ async def test_batch_paid_failure_is_durable_sanitized(tmp_path):
         assert result["status_code"] == 402
         assert result["response"] is None
         assert result["error"]["type"] == "service_error"
-        assert "opencode" not in response.text
+        assert not any(leak in response.text.lower() for leak in LEAKS)
 
 
 @pytest.mark.asyncio
 async def test_shared_client_and_store_shutdown_ownership(tmp_path):
     from jev_gateway.app import Settings, create_app
     upstream = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
-    settings = Settings(api_key="x", upstream_key="x", database=str(tmp_path / "private" / "jobs.db"))
+    settings = Settings(api_key="x", upstream_key="x", upstream_url="https://decision.invalid/systemone", deployment="decision-1", database=str(tmp_path / "private" / "jobs.db"))
     app = create_app(settings=settings, upstream_client=upstream)
     async with app.router.lifespan_context(app):
         with pytest.raises(RuntimeError, match="already owned"):

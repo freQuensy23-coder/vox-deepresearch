@@ -8,9 +8,13 @@ import pytest
 
 
 BODY = {"model": "jev-latest", "state": {"message": "hello"}, "questions": {"q": {"type": "noul"}}}
+UPSTREAM_URL = "https://decision.invalid/providers/microsoft/v1/systemone"
+DEPLOYMENT = "decision-1"
+# What a consumer must never see: the provider, the deployment, the upstream host or key.
+LEAKS = ["microsoft", DEPLOYMENT, "decision.invalid", "synthetic-upstream"]
 
 
-def answer(body, model="jev-1.13-free"):
+def answer(body, model="microsoft-decision-1"):
     answers = {}
     for key, question in body["questions"].items():
         kind = question["type"]
@@ -28,7 +32,7 @@ def answer(body, model="jev-1.13-free"):
 @asynccontextmanager
 async def service(tmp_path, handler, **kwargs):
     from jev_gateway.app import Settings, create_app
-    settings = Settings(upstream_key="synthetic-upstream", api_key="synthetic-local", database=str(tmp_path / "private" / "jobs.sqlite3"), retry_interval=0.015, **kwargs)
+    settings = Settings(upstream_key="synthetic-upstream", api_key="synthetic-local", upstream_url=UPSTREAM_URL, deployment=DEPLOYMENT, database=str(tmp_path / "private" / "jobs.sqlite3"), retry_interval=0.015, **kwargs)
     upstream = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     app = create_app(settings=settings, upstream_client=upstream)
     async with app.router.lifespan_context(app):
@@ -38,7 +42,7 @@ async def service(tmp_path, handler, **kwargs):
 
 
 @pytest.mark.asyncio
-async def test_free_success_contract(tmp_path):
+async def test_success_contract(tmp_path):
     calls = []
     def handler(request):
         calls.append(request)
@@ -49,87 +53,33 @@ async def test_free_success_contract(tmp_path):
             result = await client.post("/v1/systemone", json=body)
             assert result.status_code == 200
             assert result.json() == answer(BODY, "jev-1.13.0")
-        assert [json.loads(r.content)["model"] for r in calls] == ["jev-1.13-free"] * 3
+        assert [str(r.url) for r in calls] == [UPSTREAM_URL] * 3
+        assert [json.loads(r.content)["model"] for r in calls] == [DEPLOYMENT] * 3
         assert all(r.headers["User-Agent"] == "Jev-Local-Gateway/1.0" for r in calls)
-        assert len({r.headers["x-opencode-session"] for r in calls}) == 1
-        assert all(r.headers["Authorization"] == "Bearer synthetic-upstream" for r in calls)
+        assert all(r.headers["api-key"] == "synthetic-upstream" and "Authorization" not in r.headers for r in calls)
         models = (await client.get("/v1/models")).json()
         assert {m["name"] for m in models["models"]} == {"jev-latest", "jev-preview", "jev-1.13.0"}
         assert all(set(m) == {"name", "description", "release_date"} for m in models["models"])
-        assert "opencode" not in json.dumps(models).lower()
-        assert "free" not in json.dumps(models).lower()
+        assert not any(leak in json.dumps(models).lower() for leak in LEAKS)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [401,402,403,404,429,500,503,"timeout","malformed"])
-async def test_every_free_failure_falls_back_and_cools(tmp_path, failure):
-    calls = []
-    def handler(request):
-        body = json.loads(request.content)
-        calls.append(body["model"])
-        if body["model"].endswith("free"):
-            if failure == "timeout":
-                raise httpx.ReadTimeout("synthetic secret provider", request=request)
-            if failure == "malformed":
-                return httpx.Response(200, json={"model": "jev-1.13-free"})
-            return httpx.Response(failure, json={"error": "opencode free synthetic-upstream"})
-        return httpx.Response(200, json=answer(body, body["model"]))
-    async with service(tmp_path, handler) as (client, app):
-        for _ in range(2):
-            response = await client.post("/v1/systemone", json=BODY)
-            assert response.status_code == 200
-            assert response.json()["model"] == "jev-1.13.0"
-        assert calls == ["jev-1.13-free", "jev-1.13", "jev-1.13"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("status", [400,422])
-async def test_upstream_client_error_does_not_fallback(tmp_path, status):
+@pytest.mark.parametrize("failure", [400, 401, 402, 403, 404, 422, 429, 500, 503, "timeout", "malformed"])
+async def test_upstream_failure_keeps_its_status_and_is_sanitized(tmp_path, failure):
     calls = []
     def handler(request):
         calls.append(request)
-        return httpx.Response(status, text="opencode synthetic-upstream free")
+        if failure == "timeout":
+            raise httpx.ReadTimeout("synthetic secret provider", request=request)
+        if failure == "malformed":
+            return httpx.Response(200, json={"model": "microsoft-decision-1"})
+        return httpx.Response(failure, text="Microsoft decision-1 at decision.invalid: synthetic-upstream rejected")
     async with service(tmp_path, handler) as (client, app):
         response = await client.post("/v1/systemone", json=BODY)
-        assert response.status_code == status
-        assert len(calls) == 1
-        assert not any(s in response.text for s in ["opencode", "synthetic-upstream", "free"])
-
-
-@pytest.mark.asyncio
-async def test_paid_402_is_sanitized_not_success(tmp_path):
-    async with service(tmp_path, lambda r: httpx.Response(402, text="Upstream request failed: Insufficient account funds. opencode free synthetic-upstream")) as (client, app):
-        response = await client.post("/v1/systemone", json=BODY)
-        assert response.status_code == 402
+        assert response.status_code == (502 if failure in ("timeout", "malformed") else failure)
         assert response.json() == {"error": {"type": "service_error", "message": "Jev request could not be completed."}}
-
-
-@pytest.mark.asyncio
-async def test_cooldown_half_open_single_probe_and_recovery(tmp_path):
-    calls = []
-    entered = asyncio.Event()
-    release = asyncio.Event()
-    async def handler(request):
-        body = json.loads(request.content)
-        calls.append(body["model"])
-        if len(calls) == 1:
-            return httpx.Response(429)
-        if body["model"].endswith("free") and not release.is_set():
-            entered.set()
-            await release.wait()
-        return httpx.Response(200, json=answer(body))
-    async with service(tmp_path, handler, cooldown_seconds=0.02, upstream_concurrency=20) as (client, app):
-        assert (await client.post("/v1/systemone", json=BODY)).status_code == 200
-        await asyncio.sleep(0.03)
-        probe = asyncio.create_task(client.post("/v1/systemone", json=BODY))
-        await asyncio.wait_for(entered.wait(), 1)
-        others = await asyncio.wait_for(asyncio.gather(*(client.post("/v1/systemone", json=BODY) for _ in range(8))), 1)
-        assert all(r.status_code == 200 for r in others)
-        assert calls.count("jev-1.13-free") == 2
-        release.set()
-        assert (await probe).status_code == 200
-        assert (await client.post("/v1/systemone", json=BODY)).status_code == 200
-        assert calls[-1] == "jev-1.13-free"
+        assert len(calls) == 1
+        assert not any(leak in response.text.lower() for leak in LEAKS)
 
 
 @pytest.mark.asyncio
@@ -149,14 +99,14 @@ async def test_bound_upstream_concurrency(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", [{"model": "jev-1.13-free"}, {"model": "unknown"}, {"state": None}, {"state": 1}, {"questions": {}}, {"questions": {"q": {"type": "score", "criteria": []}}}, {"questions": {"q": {"type": "score", "criteria": [None]}}}, {"questions": {"q": {"type": "choice", "criteria": {"x": 1}}}}, {"questions": {"q": {"type": "noul", "instructions": 3}}}, {"questions": {"q": {"type": "noul", "criteria": []}}}])
+@pytest.mark.parametrize("change", [{"model": DEPLOYMENT}, {"model": "unknown"}, {"state": None}, {"state": 1}, {"questions": {}}, {"questions": {"q": {"type": "score", "criteria": []}}}, {"questions": {"q": {"type": "score", "criteria": [None]}}}, {"questions": {"q": {"type": "choice", "criteria": {"x": 1}}}}, {"questions": {"q": {"type": "noul", "instructions": 3}}}, {"questions": {"q": {"type": "noul", "criteria": []}}}])
 async def test_invalid_request_no_upstream(tmp_path, change):
     calls = []
     async with service(tmp_path, lambda r: calls.append(r)) as (client, app):
         response = await client.post("/v1/systemone", json=dict(BODY, **change))
         assert response.status_code == 422
         assert calls == []
-        assert "jev-1.13-free" not in response.text
+        assert DEPLOYMENT not in response.text
 
 
 @pytest.mark.asyncio
@@ -169,12 +119,12 @@ async def test_structured_optional_nullable_and_unknown_fields_forward(tmp_path)
     body = dict(BODY, future={"a": 2}, questions={"n": {"type": "noul", "criteria": {"true": None, "false": ["x"]}, "extra": 1}, "c": {"type": "choice", "instructions": None, "criteria": {"a": None, "b": {"data": 1}}}, "s": {"type": "score", "instructions": {"task": "x"}, "criteria": [["one"]]}})
     async with service(tmp_path, handler) as (client, app):
         assert (await client.post("/v1/systemone", json=body)).status_code == 200
-        assert calls == [dict(body, model="jev-1.13-free")]
+        assert calls == [dict(body, model=DEPLOYMENT)]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mutation", ["missing_answer", "extra_answer", "wrong_type", "bool_usage", "missing_usage", "negative_usage", "nan", "infinity", "out_of_range", "extra_metadata"])
-async def test_invalid_response_paid_failure_sanitized(tmp_path, mutation):
+async def test_invalid_response_is_sanitized(tmp_path, mutation):
     def handler(request):
         result = answer(BODY)
         if mutation == "missing_answer": result["answers"] = {}
@@ -186,12 +136,12 @@ async def test_invalid_response_paid_failure_sanitized(tmp_path, mutation):
         if mutation == "nan": result["answers"]["q"]["noul"] = float("nan")
         if mutation == "infinity": result["answers"]["q"]["noul"] = float("inf")
         if mutation == "out_of_range": result["answers"]["q"]["noul"] = 2
-        if mutation == "extra_metadata": result["provider"] = "opencode"
+        if mutation == "extra_metadata": result["provider"] = "microsoft"
         return httpx.Response(200, content=json.dumps(result))
     async with service(tmp_path, handler) as (client, app):
         response = await client.post("/v1/systemone", json=BODY)
         assert response.status_code == 502
-        assert not any(s in response.text for s in ["opencode", "free", "synthetic-upstream"])
+        assert not any(leak in response.text.lower() for leak in LEAKS)
 
 
 @pytest.mark.asyncio
@@ -243,43 +193,18 @@ async def test_batches_pagination_duplicates_bounds_permissions(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_batch_switches_to_paid_at_once_and_back_to_free_after_probe(tmp_path):
-    calls = []
-    free_down = {"value": True}
-    def handler(request):
-        body = json.loads(request.content)
-        calls.append(body["model"])
-        if body["model"].endswith("free") and free_down["value"]:
-            return httpx.Response(429)
-        return httpx.Response(200, json=answer(body))
-    async with service(tmp_path, handler, cooldown_seconds=0.2) as (client, app):
-        start = asyncio.get_running_loop().time()
-        first = (await client.post("/v1/batches", json=batch(4, concurrency=1))).json()
-        assert (await completed(client, first["id"]))["completed"] == 4
-        assert asyncio.get_running_loop().time() - start < 0.2  # no waiting for the free route
-        assert calls.count("jev-1.13-free") == 1 and calls.count("jev-1.13") == 4
-        free_down["value"] = False
-        await asyncio.sleep(0.25)
-        calls.clear()
-        second = (await client.post("/v1/batches", json=batch(4, concurrency=1))).json()
-        assert (await completed(client, second["id"]))["completed"] == 4
-        assert calls == ["jev-1.13-free"] * 4  # the probe succeeded: everything is back on free
-
-
-@pytest.mark.asyncio
 async def test_batch_retries_rate_limited_items_instead_of_failing_them(tmp_path):
     calls = []
     def handler(request):
-        body = json.loads(request.content)
-        calls.append(body["model"])
-        if body["model"].endswith("free") or calls.count("jev-1.13") <= 2:
+        calls.append(request)
+        if len(calls) <= 2:
             return httpx.Response(429)
-        return httpx.Response(200, json=answer(body))
+        return httpx.Response(200, json=answer(json.loads(request.content)))
     async with service(tmp_path, handler) as (client, app):
         created = (await client.post("/v1/batches", json=batch(1, concurrency=1))).json()
         final = await completed(client, created["id"])
         assert final["completed"] == 1 and final["failed"] == 0
-        assert calls.count("jev-1.13") == 3
+        assert len(calls) == 3
 
 
 @pytest.mark.asyncio
@@ -331,15 +256,13 @@ async def test_batch_restart_preserves_completed_and_recovers_running(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_upstream_billing_fields_are_accepted_and_not_passed_on(tmp_path):
+async def test_extra_usage_fields_are_accepted_and_not_passed_on(tmp_path):
     def handler(request):
-        if json.loads(request.content)["model"] == "jev-1.13-free":
-            return httpx.Response(429, content=json.dumps({"type": "error", "error": {"type": "FreeUsageLimitError"}}))
         result = answer(BODY)
-        result["usage"].update(cost=0.00001302, opencode={"billing_source": "balance", "list_cost": 0.00001302, "tokens": {"input": 5, "output": 2}})
+        result["usage"].update(cost=0.00001302, billing={"source": "balance", "tokens": {"input": 5, "output": 2}})
         return httpx.Response(200, content=json.dumps(result))
     async with service(tmp_path, handler) as (client, app):
         response = await client.post("/v1/systemone", json=BODY)
         assert response.status_code == 200
         assert response.json()["usage"] == {"input_tokens": 5, "output_tokens": 2}
-        assert "opencode" not in response.text and "cost" not in response.text
+        assert "billing" not in response.text and "cost" not in response.text
