@@ -115,13 +115,16 @@ token_budget:
 # ============================================================================
 # A run's recursion_limit caps the number of LangGraph super-steps (each is at
 # least one LLM call). Clients may override the default per request; invalid or
-# non-positive client values fall back to this configured default.
-recursion_limit: 1000
+# non-positive client values fall back to this configured default. The web UI
+# sends none, so its runs get this value. A Telegram research lead passes ~20
+# super-steps per model call through the middleware chain and makes hundreds of
+# calls; local-deploy/research.py uses the same 30000.
+recursion_limit: 30000
 
 # The Gateway never trusts a configured or client-supplied value above this
 # ceiling, preventing runaway API cost / DoS. Raise it only if you legitimately
 # run very deeply nested subagent graphs.
-max_recursion_limit: 2000
+max_recursion_limit: 30000
 
 
 # ============================================================================

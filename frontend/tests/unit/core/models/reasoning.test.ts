@@ -134,12 +134,12 @@ describe("getResolvedMode", () => {
   it("keeps the requested mode on an optional-thinking model", () => {
     expect(getResolvedMode("flash", legacyThinking)).toBe("flash");
     expect(getResolvedMode("ultra", legacyThinking)).toBe("ultra");
-    expect(getResolvedMode(undefined, legacyThinking)).toBe("pro");
+    expect(getResolvedMode(undefined, legacyThinking)).toBe("ultra");
   });
 
   it("never yields flash on a required-thinking model", () => {
     expect(getResolvedMode("flash", glm)).toBe("thinking");
-    expect(getResolvedMode(undefined, glm)).toBe("pro");
+    expect(getResolvedMode(undefined, glm)).toBe("ultra");
     expect(getResolvedMode("ultra", glm)).toBe("ultra");
   });
 });

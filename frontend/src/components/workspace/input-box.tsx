@@ -822,7 +822,10 @@ export function InputBox({
       resolveReasoningEffort(
         selectedModel,
         context.reasoning_effort ??
-          reasoningEffortForMode(context.mode ?? "pro", selectedModel),
+          reasoningEffortForMode(
+            getResolvedMode(context.mode, selectedModel),
+            selectedModel,
+          ),
       ),
     [context.mode, context.reasoning_effort, selectedModel],
   );

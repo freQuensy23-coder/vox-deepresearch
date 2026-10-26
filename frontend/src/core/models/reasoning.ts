@@ -112,6 +112,10 @@ export function resolveReasoningEffort(
  * Clamp a chat mode to what the model supports: no thinking mode on a model
  * without thinking, and never `flash` on a model whose thinking is required.
  */
+// A mode the user never picked: Ultra, because Telegram research runs need
+// subagents and the plan.
+const DEFAULT_MODE: InputMode = "ultra";
+
 export function getResolvedMode(
   mode: InputMode | undefined,
   model: Model | null | undefined,
@@ -124,9 +128,9 @@ export function getResolvedMode(
     if (mode === "flash") {
       return "thinking";
     }
-    return mode ?? "pro";
+    return mode ?? DEFAULT_MODE;
   }
-  return mode ?? "pro";
+  return mode ?? DEFAULT_MODE;
 }
 
 /** The effort a mode preset implies, mapped onto the model's contract. */

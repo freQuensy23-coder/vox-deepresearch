@@ -26,6 +26,9 @@ proxy listens on the pod's loopback only and is opened through an SSH tunnel
 (`ssh -L 8800:127.0.0.1:8000 ...`, then http://localhost:8800). Anonymous
 requests act as the existing account (`DEER_FLOW_AUTH_DISABLED_USER_ID` in
 `runpod_native.py`), so its threads and `research.py` runs stay listed.
+A new chat starts in Ultra (plan and subagents), which research needs, and the
+UI sends no step limit, so runs get `recursion_limit` from `config.yaml`
+(30000, the same as `research.py`).
 
 The lead and depth prompts tell agents to write only inside their assigned
 virtual thread folder. Bash command text is not scanned for file paths. Virtual
