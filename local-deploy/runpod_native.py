@@ -57,12 +57,15 @@ def ancestors():
 
 def ours():
     """Processes started from this checkout (any previous launch, tracked or not),
-    except this launcher and the deploy shell that runs it."""
+    except this launcher and the deploy shell that runs it. The Next server renames
+    itself to `next-server`, so it is found by its working directory, the build
+    folder, which a deploy replaces (the old one then reads as `... (deleted)`)."""
     skip = ancestors()
+    build = str(source / "frontend/build")
     for entry in Path("/proc").iterdir():
         if entry.name.isdigit() and int(entry.name) not in skip:
             try:
-                if str(source) in (entry / "cmdline").read_bytes().decode(errors="replace"):
+                if str(source) in (entry / "cmdline").read_bytes().decode(errors="replace") or os.readlink(entry / "cwd").startswith(build):
                     yield int(entry.name)
             except OSError:
                 pass
