@@ -9,6 +9,7 @@ full, the command fails at once: do other work and retry later.
 Run from the research folder. It holds:
     registry.json       keywords and whales with their status
     messages_raw.db     every message Vox returned, deduplicated, with sources (pool.py)
+    vox/heartbeat       touched while a search or whale runs: the recon reminder waits while Vox is busy
 
     vox.py search QUERY --since 2025-10-14 [--until ...] [--kind all|post|comment]
     vox.py whale USER_ID [--since 2025-10-14]
@@ -24,6 +25,7 @@ import json
 import os
 import re
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -41,6 +43,8 @@ SEARCH_TIMEOUT = 600
 WHALE_LIMIT = 100000
 REGISTRY = Path("registry.json")
 FILTERED = Path("messages_filtered.json")
+HEARTBEAT = Path("vox/heartbeat")
+HEARTBEAT_SECONDS = 30
 CHECKPOINT = ("query", "since", "until", "kind", "pending", "calls", "complete")
 
 
@@ -132,6 +136,27 @@ def _locked(path):
         yield
 
 
+@contextmanager
+def _alive():
+    """Touch vox/heartbeat every HEARTBEAT_SECONDS while the block runs, and once at its end."""
+    stop = threading.Event()
+    HEARTBEAT.parent.mkdir(parents=True, exist_ok=True)
+    HEARTBEAT.touch()
+
+    def beat():
+        while not stop.wait(HEARTBEAT_SECONDS):
+            HEARTBEAT.touch()
+
+    thread = threading.Thread(target=beat, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+        HEARTBEAT.touch()
+
+
 def _message(row, user_id=None):
     message_id = row.get("id")
     if message_id is None and row.get("message_url"):
@@ -216,7 +241,8 @@ class Vox:
             state = {k: v for k, v in _load(out).items() if k in CHECKPOINT}
         else:
             state = {"query": query, "since": _iso(since), "until": until, "kind": kind, "pending": [[_iso(since), until]], "calls": 0}
-        _traverse(state, out, query)
+        with _alive():
+            _traverse(state, out, query)
         state["complete"] = True
         _save(out, state)
 
@@ -232,7 +258,8 @@ class Vox:
         """A whale's messages in public chats (Vox user_tracker messages panel only).
         Adds them to messages_raw.db and marks the whale fetched."""
         uid = int(user_id)
-        data = _call(f"/user_tracker/{uid}/panels/messages", {"limit": WHALE_LIMIT})
+        with _alive():
+            data = _call(f"/user_tracker/{uid}/panels/messages", {"limit": WHALE_LIMIT})
         _save(f"vox/whales/{uid}.json", data)
         low = _date(since) if since else None
         messages = [_message(row, user_id=uid) for row in data.get("rows") or [] if row.get("is_private") is not True and (low is None or _date(row["date"]) >= low)]

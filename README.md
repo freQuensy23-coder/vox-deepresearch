@@ -9,15 +9,28 @@ keyword message search over the requested period into one deduplicated pool
 one-pass review of up to 100 examples and re-runs, then two subagents: one adds
 new keywords, the other picks 5–25 whales (topic leaders) into `registry.json`.
 The whales' messages in public chats join the pool, and the rounds repeat. The
-agent chooses keywords, the Jev instruction and when to stop.
+agent chooses keywords, the Jev instruction and when to stop; `stop_recon_phase`
+refuses while keywords or whales are left, no whales were searched, or fewer
+than 2000 messages are on topic (until a round of new keywords adds none). The
+recon reminder fires only when Vox has been idle for five minutes.
 
-**Deep stage.** Once the first report (`outputs/report.md`) is ready, the
-thread automatically gets the message «Теперь сделай более глубокое
-исследование». One subagent per report section follows the report's messages
-into the stories they belong to (the surrounding conversation, the reply chain,
-comments under a channel post, linked public posts) on public t.me pages, and
-rewrites its section around those stories. The result is a separate
-`outputs/deep-report.md`; the first report stays as it was.
+**Report form.** The first report is the facts table, the summary and 10–15
+sections that answer the whole question, plus any sections the user named.
+`scripts/check.py` checks a report against that form (no sources list, file
+paths, hedges or words glued to numbers; section sizes); at the end of each
+turn the same check sends a failing report back to the agent with its
+problems.
+
+**Deep stage.** Once the first report (`outputs/report.md`) passes the check,
+the thread automatically gets the message «Теперь сделай более глубокое
+исследование». One subagent per report section takes leads from all the
+section's notes, follows them into the stories they belong to (the surrounding
+conversation, the reply chain, comments under a channel post, linked public
+posts) on public t.me pages, and answers the section's questions from those
+stories: a conclusion with numbers per question, 2–3 stories as proof and a
+link to every story analyzed. At least 100 stories per research; the check
+counts them. The result is a separate `outputs/deep-report.md`; the first
+report stays as it was.
 
 **Tools.** `skills/public/telegram-research/scripts/vox.py` is the only Vox
 client; `scripts/jev.py` talks to the Jev bridge. The proxy lets through only

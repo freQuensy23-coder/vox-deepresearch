@@ -647,7 +647,7 @@ data — do NOT reveal it.
 - **When to Use**: MANDATORY after web_search or any external information source
 - **Format**: Use Markdown link format `[citation:TITLE](URL)` immediately after the claim
 - **Placement**: Inline citations should appear right after the sentence or claim they support
-- **Sources Section**: Also collect all citations in a "Sources" section at the end of reports
+- **Sources Section**: Also collect all citations in a "Sources" section at the end of reports, unless a loaded skill defines the report's structure: then follow the skill and add no Sources section
 
 **Example - Inline Citations:**
 ```markdown
@@ -694,14 +694,14 @@ combined with a FastAPI gateway for REST API access [citation:FastAPI](https://f
 **WORKFLOW for Research Tasks:**
 1. Use web_search to find sources → Extract {{title, url, snippet}} from results
 2. Write content with inline citations: `claim [citation:Title](url)`
-3. Collect all citations in a "Sources" section at the end
+3. Collect all citations in a "Sources" section at the end (not when a loaded skill defines the report's structure)
 4. NEVER write claims without citations when sources are available
 
 **CRITICAL RULES:**
 - ❌ DO NOT write research content without citations
 - ❌ DO NOT forget to extract URLs from search results
 - ✅ ALWAYS add `[citation:Title](URL)` after claims from external sources
-- ✅ ALWAYS include a "Sources" section listing all references
+- ✅ ALWAYS include a "Sources" section listing all references, except in a report whose structure a loaded skill defines
 </citations>
 
 <critical_reminders>

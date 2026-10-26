@@ -8,7 +8,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
-from deerflow.agents.middlewares.deep_stage_middleware import DEEP_STAGE_HINT, DEEP_STAGE_TEXT, DeepStageMiddleware
+from deerflow.agents.middlewares.deep_stage_middleware import CHECK_SCRIPT, DEEP_STAGE_HINT, DEEP_STAGE_TEXT, MAX_RETURNS, REPORT_CHECK, DeepStageMiddleware
 from deerflow.agents.middlewares.recon_watchdog_middleware import ReconWatchdogMiddleware
 from deerflow.agents.thread_state import ThreadDataState
 from deerflow.config.app_config import AppConfig
@@ -22,6 +22,22 @@ def thread(tmp_path):
     outputs.mkdir()
     (workspace / "research/messages_filtered.json").write_text('{"messages": []}')
     return {"workspace_path": str(workspace), "outputs_path": str(outputs)}
+
+
+SKILLS = Path(__file__).resolve().parents[2] / "skills"
+BODY = "Агентства берут долю и ведут страницу модели по договору. " * 160
+
+
+def good_report(thread, name="report.md"):
+    """A report in the form, with the facts table and questions.md it is checked against."""
+    research = Path(thread["workspace_path"], "research")
+    (research / "report").mkdir(exist_ok=True)
+    facts = "## Технические данные\n\n| Показатель | Значение |\n|---|---:|\n| Сообщений в пуле | 10 |\n"
+    (research / "report/facts.md").write_text(facts, encoding="utf-8")
+    titles = [f"Как работает часть рынка номер {chr(1040 + i)}" for i in range(10)]
+    (research / "questions.md").write_text("".join(f"## {i:02d}-part | {t}\n- вопрос\n\n" for i, t in enumerate(titles, 1)), encoding="utf-8")
+    sections = "".join(f"## {t}\n\n{BODY}\n\n### Чего не видно в данных\n\n- Сроков выплат никто не публикует.\n\n" for t in titles)
+    Path(thread["outputs_path"], name).write_text(f"{facts}\n## Общее резюме\n\n1. **Агентства берут половину дохода.**\n\n{sections}", encoding="utf-8")
 
 
 def state(thread, last, **extra):
@@ -115,3 +131,42 @@ def test_a_deep_stage_request_gets_the_skill_hint_once(thread):
     assert middleware.before_model({**asked, "messages": [HumanMessage(DEEP_STAGE_TEXT), hint]}, None) is None
     assert middleware.before_model({"messages": [HumanMessage(DEEP_STAGE_TEXT)], "thread_data": {"workspace_path": "/nowhere"}}, None) is None
     assert asyncio.run(middleware.abefore_model(asked, None))["messages"][0].content == hint.content
+
+
+def checked():
+    return DeepStageMiddleware(check_script=SKILLS / CHECK_SCRIPT)
+
+
+def test_a_report_out_of_form_goes_back_with_its_problems_and_no_deep_stage(thread):
+    Path(thread["outputs_path"], "report.md").write_text("# Отчёт\n\n## Источники\n", encoding="utf-8")
+    update = checked().after_model(state(thread, AIMessage(content="Отчёт готов.")), None)
+    message = update["messages"][0]
+    assert update["jump_to"] == "model" and update["report_check_returns"] == 1 and "deep_stage_requested" not in update
+    assert message.additional_kwargs[REPORT_CHECK] is True and "check.py /mnt/user-data/outputs/report.md" in message.content
+    assert "report/facts.md нет" in message.content
+
+
+def test_a_report_in_form_starts_the_deep_stage(thread):
+    good_report(thread)
+    update = checked().after_model(state(thread, AIMessage(content="Отчёт готов."), report_check_returns=2), None)
+    assert update["messages"][0].content == DEEP_STAGE_TEXT and update["deep_stage_requested"] is True and update["report_check_returns"] == 0
+
+
+def test_the_deep_report_is_checked_once_the_deep_stage_was_asked_for(thread):
+    good_report(thread)
+    update = checked().after_model(state(thread, AIMessage(content="Глубокий отчёт готов."), deep_stage_requested=True), None)
+    assert "deep-report.md: файла нет" in update["messages"][0].content
+    good_report(thread, "deep-report.md")
+    update = checked().after_model(state(thread, AIMessage(content="Глубокий отчёт готов."), deep_stage_requested=True), None)
+    assert "разобрано историй: 0, нужно не меньше 100" in update["messages"][0].content
+
+
+def test_the_check_gives_up_after_max_returns(thread):
+    Path(thread["outputs_path"], "report.md").write_text("# Отчёт", encoding="utf-8")
+    assert checked().after_model(state(thread, AIMessage(content="Отчёт готов."), report_check_returns=MAX_RETURNS), None) is None
+
+
+def test_the_async_check_matches_sync(thread):
+    Path(thread["outputs_path"], "report.md").write_text("# Отчёт", encoding="utf-8")
+    update = asyncio.run(checked().aafter_model(state(thread, AIMessage(content="Отчёт готов.")), None))
+    assert update["messages"][0].additional_kwargs[REPORT_CHECK] is True

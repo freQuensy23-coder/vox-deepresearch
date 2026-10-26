@@ -125,10 +125,18 @@ Before changing a later authorization phase, read the [authorization RFC](../../
    [Loop detection lifecycle](../../../../../docs/LOOP_DETECTION.md) for
    fallback identity, cleanup/LRU/reset, severity ordering, and test invariants.
    Lead-only research middlewares follow it: **ReconWatchdogMiddleware** (`recon_watchdog.enabled`)
-   keeps a Telegram research sending Vox requests until `stop_recon_phase`, and
-   **DeepStageMiddleware** (`deep_stage.enabled`) appends the user message «Теперь сделай более
-   глубокое исследование» once per thread when a turn ends without tool calls while
-   `outputs/report.md` and `workspace/research/messages_filtered.json` exist and recon is off.
+   keeps a Telegram research sending Vox requests until `stop_recon_phase`; it reminds only when
+   no `vox.py search/whale` was started and `research/vox/heartbeat` (kept fresh by `vox.py` while
+   a command runs) is older than `idle_seconds`. `stop_recon_phase` refuses, listing what is left,
+   while `research/registry.json` has `todo` keywords or whales, has no whales, or
+   `messages_filtered.json` holds fewer than 2000 messages (lifted once a round of new keywords
+   after the refusal added none). **DeepStageMiddleware** (`deep_stage.enabled`) checks the
+   report when a turn ends without tool calls while `workspace/research/messages_filtered.json`
+   exists and recon is off: `outputs/report.md`, or `outputs/deep-report.md` once the deep
+   stage was asked for, against the skill's `scripts/check.py` (path from `skills`). A failing
+   report goes back to the agent with its problems (at most `MAX_RETURNS` times in a row); a
+   passing first report gets the user message «Теперь сделай более глубокое исследование» once
+   per thread.
 33. **TokenBudgetMiddleware** - `token_budget.enabled`: run-ID budgets survive continuations; missing/invalid IDs reset invocation state. With token usage tracking, place CompletedSubagentUsageMiddleware after the guard: reversed `after_model` hooks backfill terminal child usage before enforcement. Keep TokenUsageMiddleware earlier so current-step attribution reflects calls retained by all guards.
 34. **Custom middlewares** - *(optional)* Any `custom_middlewares` passed to `build_middlewares` are injected here, before config-declared extensions and the terminal-response/safety/clarification tail
 35. **Configured extension middlewares** - `extensions.middlewares` in `config.yaml` or `extensions_config.json` optionally accepts `module.path:ClassName` strings or `{class, kwargs}` objects. `deerflow.reflection.resolve_class` loads `AgentMiddleware` classes; import, class, and constructor errors fail agent creation. `kwargs` must be JSON-compatible; YAML dates/timestamps become ISO strings. Order: built-ins/custom and loop/token guards → extensions → terminal-response/safety/clarification tail. Subagents share the list before their safety tail; separate lead/subagent lists are unsupported. Trusted operator config only: paths instantiate arbitrary code. Gateway skill/MCP toggles preserve it in raw JSON; adding an API write path requires explicit trust-boundary review.

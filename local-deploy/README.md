@@ -49,9 +49,10 @@ The Jev client and bridge forward optional batch policy unchanged. Omitting it
 uses the gateway's own defaults; the research system adds no free-only policy,
 batch concurrency setting, or question/criteria size restrictions.
 
-The t.me relay (`tme_relay.py`) serves the deep stage: once the first report is
-ready, `deep_stage` in `config.yaml` sends the thread «Теперь сделай более
-глубокое исследование», and `tme.py` opens public t.me pages through the relay.
+The t.me relay (`tme_relay.py`) serves the deep stage: once the first report
+passes the report check, `deep_stage` in `config.yaml` sends the thread «Теперь
+сделай более глубокое исследование», and `tme.py` opens public t.me pages
+through the relay.
 It forwards only public chat and channel pages (a channel's post listing, one
 message, one comment, the latest comments of a post), never `t.me/c/…` or invite
 links, and sends no cookies or Telegram session. Every research thread on the

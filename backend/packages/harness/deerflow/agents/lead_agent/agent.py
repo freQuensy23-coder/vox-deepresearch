@@ -38,7 +38,7 @@ from deerflow.agents.interaction_policy import resolve_run_interaction_policy
 from deerflow.agents.lead_agent.prompt import apply_prompt_template, has_bash_tool
 from deerflow.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from deerflow.agents.middlewares.configured_extensions import load_configured_extension_middlewares
-from deerflow.agents.middlewares.deep_stage_middleware import DeepStageMiddleware
+from deerflow.agents.middlewares.deep_stage_middleware import CHECK_SCRIPT, DeepStageMiddleware
 from deerflow.agents.middlewares.loop_detection_middleware import LoopDetectionMiddleware
 from deerflow.agents.middlewares.memory_middleware import MemoryMiddleware
 from deerflow.agents.middlewares.model_length_finish_reason_middleware import ModelLengthFinishReasonMiddleware
@@ -745,9 +745,9 @@ def build_middlewares(
     if resolved_app_config.recon_watchdog.enabled:
         middlewares.append(ReconWatchdogMiddleware.from_config(resolved_app_config.recon_watchdog))
 
-    # DeepStageMiddleware — once the first Telegram research report is ready, ask for the deep stage
+    # DeepStageMiddleware — check Telegram research reports at turn end; a passing first report starts the deep stage
     if resolved_app_config.deep_stage.enabled:
-        middlewares.append(DeepStageMiddleware())
+        middlewares.append(DeepStageMiddleware(check_script=resolved_app_config.skills.get_skills_path() / CHECK_SCRIPT))
 
     # TokenBudgetMiddleware - enforce per-run token limits
     token_budget_config = resolved_app_config.token_budget

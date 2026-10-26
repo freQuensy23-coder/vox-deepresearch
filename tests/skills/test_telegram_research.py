@@ -1,4 +1,4 @@
-"""Offline contracts for the telegram-research scripts (vox.py, jev.py, read.py, notes.py, facts.py, tme.py)."""
+"""Offline contracts for the telegram-research scripts (vox.py, jev.py, read.py, notes.py, facts.py, tme.py, check.py)."""
 
 import importlib.util
 import io
@@ -27,6 +27,7 @@ notes = load("notes")
 facts = load("facts")
 pool = load("pool")
 tme = load("tme")
+check = load("check")
 
 
 def row(mid, date, group=-1001, text=None, user=7):
@@ -454,3 +455,79 @@ def test_facts_never_link_a_chat_without_a_public_name():
     filtered_file([{**fm(1, "Вахта в закрытом чате", group=-5), "group_url": "https://t.me/c/1001676657599", "message_url": "https://t.me/c/1001676657599/77"}])
     text = facts.facts()
     assert "t.me/c/" not in text and "нет публичной ссылки" in text
+
+
+def test_vox_heartbeat_is_fresh_while_a_command_runs_and_after_it(monkeypatch):
+    monkeypatch.setattr(vox, "HEARTBEAT_SECONDS", 0.01)
+    with vox._alive():
+        assert vox.HEARTBEAT.is_file()
+        first = vox.HEARTBEAT.stat().st_mtime_ns
+    assert vox.HEARTBEAT.stat().st_mtime_ns >= first
+
+
+FACTS_MD = "## Технические данные\n\n| Показатель | Значение |\n|---|---:|\n| Сообщений в пуле | 10 |\n"
+BODY = "Агентства берут долю и ведут страницу модели по договору. " * 160
+
+
+def section(title, body=BODY, unseen=("Сроков выплат никто не публикует.",)):
+    return f"## {title}\n\n{body}\n\n### Чего не видно в данных\n\n" + "".join(f"- {item}\n" for item in unseen) + "\n"
+
+
+def report_folder(sections=10):
+    titles = [f"Как работает часть рынка номер {chr(1040 + i)}" for i in range(sections)]
+    Path("report").mkdir()
+    Path("report/facts.md").write_text(FACTS_MD, encoding="utf-8")
+    Path("questions.md").write_text("".join(f"## {i:02d}-part | {t}\n- вопрос\nnotes: 01-x\n\n" for i, t in enumerate(titles, 1)), encoding="utf-8")
+    summary = "## Общее резюме\n\n1. **Агентства берут половину дохода.** [пример](https://t.me/chat/1)\n\nПериод — два года; это самоотчёт участников рынка.\n\n"
+    return titles, FACTS_MD + "\n" + summary + "".join(section(t) for t in titles)
+
+
+def test_check_passes_a_report_in_the_form():
+    _, text = report_folder()
+    Path("report.md").write_text(text, encoding="utf-8")
+    assert check.problems("report.md") == []
+
+
+def test_check_names_every_break_of_the_form():
+    titles, text = report_folder()
+    text = "# Отчёт\n\nВступление.\n\n" + text.replace(section(titles[1]), section(titles[1], BODY + "Цифры из notes/03.md, это самоотчёт агентства от21 января."))
+    text = text.replace(section(titles[2]), section(titles[2], "Коротко.", unseen=("a", "b", "c", "d")))
+    text += "## Источники\n\n- [пример](https://t.me/chat/1)\n"
+    Path("report.md").write_text(text, encoding="utf-8")
+    found = "\n".join(check.problems("report.md"))
+    for expected in ("первым идёт report/facts.md", "«# Отчёт»", "«Источники»: разделов об источниках", "путь к файлу", "«самоотчёт»", "слиплось с числом «т2»", "больше трёх пунктов", "раздел «Источники»: его нет в questions.md"):
+        assert expected in found, expected
+    assert f"раздел «{titles[2]}»: 15 слов, нужно 1200–2500" in found
+
+
+def test_check_wants_the_whole_map():
+    _, text = report_folder(sections=4)
+    Path("report.md").write_text(text, encoding="utf-8")
+    assert any("4 разделов, нужно 10–15" in p for p in check.problems("report.md"))
+
+
+def test_check_reports_missing_and_misordered_sections():
+    titles, text = report_folder()
+    Path("report.md").write_text(text.replace(section(titles[3]), ""), encoding="utf-8")
+    assert f"раздела «{titles[3]}» из questions.md нет в отчёте" in check.problems("report.md")
+    swapped = text.replace(section(titles[0]), "@@").replace(section(titles[1]), section(titles[0])).replace("@@", section(titles[1]))
+    Path("report.md").write_text(swapped, encoding="utf-8")
+    assert "разделы идут не в порядке questions.md" in check.problems("report.md")
+
+
+def test_check_counts_and_matches_the_deep_stories():
+    titles, text = report_folder()
+    Path("deep/stories").mkdir(parents=True)
+    stories = [f"## История {i}\nЧто произошло и чем кончилось.\nhttps://t.me/chat/{i}\n" for i in range(100)]
+    Path("deep/stories/01-part.md").write_text("".join(stories), encoding="utf-8")
+    words = "Агентства берут долю и ведут страницу модели по договору. " * 220
+    deep = text.replace(BODY, words)
+    links = "".join(f"- История {i}: https://t.me/chat/{i}\n" for i in range(100))
+    Path("deep-report.md").write_text(deep.replace(section(titles[0], words), section(titles[0], words + "\n\n" + links)), encoding="utf-8")
+    assert check.problems("deep-report.md") == []
+    Path("deep/stories/01-part.md").write_text("".join(stories[:99]) + "## История без ссылки\nЧто-то было.\n## Чужая\nhttps://t.me/other/5\n", encoding="utf-8")
+    found = check.problems("deep-report.md")
+    assert "у истории «История без ссылки» нет ссылок" in "\n".join(found)
+    assert any("«Чужая»" in p and "не упомянута в отчёте" in p for p in found)
+    Path("deep/stories/01-part.md").write_text("".join(stories[:12]), encoding="utf-8")
+    assert check.problems("deep-report.md")[0] == "разобрано историй: 12, нужно не меньше 100"
