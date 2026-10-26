@@ -23,6 +23,10 @@ GATEWAY_UID = 1001
 
 python = str(source / "backend/.venv/bin/python")
 env = {"PATH": f"{source}/backend/.venv/bin:{source}/.node/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(home)}
+# The UI has no login: the proxy listens on loopback only and is reached through
+# an SSH tunnel. Anonymous requests act as the existing account, whose threads
+# (and research.py runs) the UI then lists.
+ui_env = dict(env, DEER_FLOW_AUTH_DISABLED="1", DEER_FLOW_AUTH_DISABLED_USER_ID="c5b6a22f-648d-41b7-9291-413adeb1db4b")
 
 
 def drop_to_gateway_user():
@@ -39,10 +43,10 @@ services = {
     "gateway": (
         [python, "-m", "uvicorn", "app.gateway.app:app", "--host", "127.0.0.1", "--port", "18091"],
         source / "backend",
-        env,
+        ui_env,
         drop_to_gateway_user,
     ),
-    "frontend": ([node, "server.js"], source / "frontend/build", dict(env, NODE_ENV="production", HOSTNAME="127.0.0.1", PORT="3000"), None),
+    "frontend": ([node, "server.js"], source / "frontend/build", dict(ui_env, NODE_ENV="production", HOSTNAME="127.0.0.1", PORT="3000"), None),
     "proxy": (["/usr/sbin/nginx", "-c", str(source / "local-deploy/runpod-nginx.conf")], source, env, None),
 }
 

@@ -306,6 +306,25 @@ def test_auth_disabled_stamps_default_admin_user_without_cookie(monkeypatch):
     }
 
 
+def test_auth_disabled_acts_as_configured_user_id(monkeypatch):
+    import importlib
+
+    from app.gateway import auth_disabled
+
+    monkeypatch.setenv("DEER_FLOW_AUTH_DISABLED", "1")
+    monkeypatch.setenv("DEER_FLOW_AUTH_DISABLED_USER_ID", "existing-account")
+    importlib.reload(auth_disabled)
+    try:
+        res = TestClient(_make_app()).get("/api/whoami")
+    finally:
+        monkeypatch.delenv("DEER_FLOW_AUTH_DISABLED_USER_ID")
+        importlib.reload(auth_disabled)
+
+    assert res.status_code == 200
+    assert res.json()["id"] == "existing-account"
+    assert res.json()["context_user_id"] == "existing-account"
+
+
 def test_auth_disabled_auth_me_reuses_middleware_user_without_cookie(monkeypatch):
     monkeypatch.setenv("DEER_FLOW_AUTH_DISABLED", "1")
     client = TestClient(_make_app())

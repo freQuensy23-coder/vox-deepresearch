@@ -21,6 +21,12 @@ bridge and gateway) and `AZURE_DECISION_API_KEY` (the Microsoft Foundry key the
 Jev gateway uses for its Microsoft-Decision-1 deployment). The Codex login is the
 service user's `~/.codex/auth.json`.
 
+The UI has no login (`DEER_FLOW_AUTH_DISABLED=1` for Gateway and frontend): the
+proxy listens on the pod's loopback only and is opened through an SSH tunnel
+(`ssh -L 8800:127.0.0.1:8000 ...`, then http://localhost:8800). Anonymous
+requests act as the existing account (`DEER_FLOW_AUTH_DISABLED_USER_ID` in
+`runpod_native.py`), so its threads and `research.py` runs stay listed.
+
 The lead and depth prompts tell agents to write only inside their assigned
 virtual thread folder. Bash command text is not scanned for file paths. Virtual
 paths are translated to the thread's actual workspace and structured file tools
