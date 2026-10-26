@@ -61,7 +61,7 @@ Batch items go upstream exactly like online calls (see Upstream).
 
 Requests, ordering, policy, cancellation and terminal results persist in SQLite. Startup recovers `running` items to `queued`; completed items are not rerun. Recovery is **at least once**: a crash after upstream completion but before the database commit may repeat that item and its cost. Fixed worker tasks avoid one task per queued item. Global and per-batch concurrency are both enforced. Pending queue and batch admission are bounded; 429 indicates full queue. Completed data is retained indefinitely; arrange operator retention/backups according to data sensitivity and disk capacity.
 
-SQLite operations run off the event loop. Database directory is 0700 and database file 0600. A process-level lock rejects a second owner of the same database. The database stores requests/results, not gateway credentials; it is not encrypted at rest. Use a dedicated private directory.
+SQLite operations run off the event loop. The queue database uses a WAL with `synchronous=NORMAL`: a crashed process loses nothing, a power loss may lose the last commits (the prod queue sits on scratch disk anyway). Database directory is 0700 and database file 0600. A process-level lock rejects a second owner of the same database. The database stores requests/results, not gateway credentials; it is not encrypted at rest. Use a dedicated private directory.
 
 ## Upstream
 

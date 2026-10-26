@@ -189,6 +189,10 @@ async def test_batches_pagination_duplicates_bounds_permissions(tmp_path):
         assert all(r["response"]["model"] == "jev-1.13.0" for r in first["results"])
         assert app.state.store.path.stat().st_mode & 0o777 == 0o600
         assert app.state.store.path.parent.stat().st_mode & 0o777 == 0o700
+        # The queue lives on a local scratch disk: a WAL with NORMAL sync survives a crashed
+        # process, and one fsync per commit (FULL, rollback journal) capped batches at ~160/s.
+        assert app.state.store.db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert app.state.store.db.execute("PRAGMA synchronous").fetchone()[0] == 1
         assert (await client.get("/v1/batches/nonexistent")).status_code == 404
 
 

@@ -1865,6 +1865,9 @@ jev_bridge:
 # The queue lives on local disk: every item commits twice, and a commit on the
 # pod's network /workspace takes ~50 ms (0.3 ms locally), capping batches at ~10/s.
 # A pod restart drops unfinished batches; jev.py scores are cached, rerun filter.
+# upstream_concurrency 64 is decision-1's measured optimum from the pod (366
+# answers/s, p50 0.15 s); more in flight only queues upstream: 96 -> 241/s,
+# 128 -> 93/s, 640 -> 71/s, with no 429 to warn.
 jev_gateway:
   port: 18791
   database: /tmp/jev-gateway/gateway.sqlite3

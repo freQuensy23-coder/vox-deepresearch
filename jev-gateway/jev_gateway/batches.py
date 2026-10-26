@@ -32,10 +32,12 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
             PRAGMA foreign_keys=ON;
-            PRAGMA synchronous=FULL;
+            PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=NORMAL;
             CREATE TABLE IF NOT EXISTS batches(id TEXT PRIMARY KEY, created REAL NOT NULL, cancelled INTEGER NOT NULL DEFAULT 0, policy TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS items(batch_id TEXT NOT NULL REFERENCES batches(id), position INTEGER NOT NULL, custom_id TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, started REAL, status_code INTEGER, response TEXT, error TEXT, PRIMARY KEY(batch_id,position), UNIQUE(batch_id,custom_id));
             CREATE INDEX IF NOT EXISTS items_status ON items(status);
+            CREATE INDEX IF NOT EXISTS items_batch_status_position ON items(batch_id, status, position);
         """)
         with self.db:
             self.db.execute("UPDATE items SET status='queued' WHERE status='running'")
@@ -68,15 +70,23 @@ class Store:
         return {"id": batch_id, "status": status, "total": sum(counts.values()), "completed": counts.get("completed", 0), "failed": counts.get("failed", 0), "cancelled": counts.get("cancelled", 0), "pending": pending, "created_at": batch["created"], "policy": json.loads(batch["policy"])}
 
     def claim(self):
+        """The next queued item of the oldest batch that is below its concurrency, marked running.
+        Every lookup is an index probe on (batch_id, status, position), so a claim costs the
+        same however many items are queued."""
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            rows = self.db.execute("SELECT i.batch_id,i.position,b.policy FROM items i JOIN batches b ON i.batch_id=b.id WHERE i.status='queued' AND b.cancelled=0 AND (SELECT COUNT(*) FROM items active WHERE active.batch_id=i.batch_id AND active.status='running') < json_extract(b.policy,'$.concurrency') ORDER BY b.created,i.position LIMIT 1").fetchone()
-            if rows is None:
-                return None
-            self.db.execute("UPDATE items SET status='running',started=COALESCE(started,?) WHERE batch_id=? AND position=?", (time.time(), rows["batch_id"], rows["position"]))
-            item = dict(self.db.execute("SELECT * FROM items WHERE batch_id=? AND position=?", (rows["batch_id"], rows["position"])).fetchone())
-            item["policy"] = json.loads(rows["policy"])
-            return item
+            batches = self.db.execute("SELECT b.id,b.policy FROM batches b WHERE b.cancelled=0 AND EXISTS (SELECT 1 FROM items i WHERE i.batch_id=b.id AND i.status='queued') ORDER BY b.created").fetchall()
+            for batch in batches:
+                policy = json.loads(batch["policy"])
+                running = self.db.execute("SELECT COUNT(*) FROM items WHERE batch_id=? AND status='running'", (batch["id"],)).fetchone()[0]
+                if running >= policy["concurrency"]:
+                    continue
+                position = self.db.execute("SELECT position FROM items WHERE batch_id=? AND status='queued' ORDER BY position LIMIT 1", (batch["id"],)).fetchone()[0]
+                self.db.execute("UPDATE items SET status='running',started=COALESCE(started,?) WHERE batch_id=? AND position=?", (time.time(), batch["id"], position))
+                item = dict(self.db.execute("SELECT * FROM items WHERE batch_id=? AND position=?", (batch["id"], position)).fetchone())
+                item["policy"] = policy
+                return item
+            return None
 
     def is_running(self, batch_id, position):
         row = self.db.execute("SELECT status FROM items WHERE batch_id=? AND position=?", (batch_id, position)).fetchone()

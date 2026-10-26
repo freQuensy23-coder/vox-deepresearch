@@ -400,7 +400,7 @@ class Jev:
     def cancel(self, input, output):
         return _run("cancel", input, output)
 
-    def filter(self, instruction, threshold=0.5, poll=10):
+    def filter(self, instruction, threshold=0.5, poll=2):
         """Deduplicate messages_raw.db and keep messages on topic per INSTRUCTION.
 
         Repeated texts are scored once (`duplicates` counts the copies). Scores are
