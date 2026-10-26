@@ -1563,7 +1563,7 @@ export const enUS: Translations = {
 
   // Page titles (document title)
   pages: {
-    appName: "DeerFlow",
+    appName: "TgFlow",
     chats: "Chats",
     newChat: "New chat",
     untitled: "Untitled",
