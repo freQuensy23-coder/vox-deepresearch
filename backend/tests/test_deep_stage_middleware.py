@@ -146,6 +146,11 @@ def test_a_report_out_of_form_goes_back_with_its_problems_and_no_deep_stage(thre
     assert "report/facts.md нет" in message.content
 
 
+def test_a_turn_that_ends_research_without_a_report_goes_back(thread):
+    update = checked().after_model(state(thread, AIMessage(content="Каталог: …"), recon_last_vox_at=1.0, recon_stopped=True), None)
+    assert "report.md: файла нет — сделай «Итог» по SKILL.md" in update["messages"][0].content and "deep_stage_requested" not in update
+
+
 def test_a_report_in_form_starts_the_deep_stage(thread):
     good_report(thread)
     update = checked().after_model(state(thread, AIMessage(content="Отчёт готов."), report_check_returns=2), None)

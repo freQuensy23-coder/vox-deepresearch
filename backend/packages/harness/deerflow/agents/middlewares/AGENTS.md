@@ -134,7 +134,7 @@ Before changing a later authorization phase, read the [authorization RFC](../../
    report when a turn ends without tool calls while `workspace/research/messages_filtered.json`
    exists and recon is off: `outputs/report.md`, or `outputs/deep-report.md` once the deep
    stage was asked for, against the skill's `scripts/check.py` (path from `skills`). A failing
-   report goes back to the agent with its problems (at most `MAX_RETURNS` times in a row); a
+   or missing report goes back to the agent with its problems (at most `MAX_RETURNS` times in a row); a
    passing first report gets the user message «Теперь сделай более глубокое исследование» once
    per thread.
 33. **TokenBudgetMiddleware** - `token_budget.enabled`: run-ID budgets survive continuations; missing/invalid IDs reset invocation state. With token usage tracking, place CompletedSubagentUsageMiddleware after the guard: reversed `after_model` hooks backfill terminal child usage before enforcement. Keep TokenUsageMiddleware earlier so current-step attribution reflects calls retained by all guards.

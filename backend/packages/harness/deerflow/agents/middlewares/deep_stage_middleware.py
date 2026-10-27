@@ -3,8 +3,9 @@
 The first report of the telegram-research skill is ``outputs/report.md`` of a
 thread whose workspace holds ``research/messages_filtered.json``. When the lead
 agent ends its turn (a reply without tool calls), the report is checked against
-the report form with the skill's ``scripts/check.py``. A report that fails sends
-the agent back with the list of problems; the deep report
+the report form with the skill's ``scripts/check.py``. A report that fails, or is
+missing once recon is over, sends the agent back with the list of problems; the
+deep report
 (``outputs/deep-report.md``) is checked the same way once the deep stage was
 asked for. A passing first report gets the thread the user message
 ``DEEP_STAGE_TEXT`` and the agent goes on with it. This happens once per thread
@@ -106,13 +107,13 @@ class DeepStageMiddleware(AgentMiddleware[DeepStageState]):
             return None
         deep = _deep_stage_asked(state)
         report = Path(outputs) / (DEEP_REPORT if deep else REPORT)
-        if not deep and not report.is_file():
-            return None
         try:
             problems = self._problems(report, Path(workspace) / RESEARCH)
         except Exception:
             logger.exception("Report check failed to run for %s", report)
             problems = []
+        if not problems and not report.is_file():
+            return None
         returns = state.get("report_check_returns", 0)
         if problems:
             if returns >= MAX_RETURNS:

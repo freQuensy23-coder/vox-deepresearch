@@ -117,7 +117,8 @@ def problems(report, folder="."):
     report, folder = Path(report), Path(folder)
     kind = "deep" if report.name == "deep-report.md" else "report"
     if not report.is_file():
-        return [f"{report.name}: файла нет"]
+        stage = "закончи глубокий этап" if kind == "deep" else "сделай «Итог»"
+        return [f"{report.name}: файла нет — {stage} по SKILL.md до конца, с разделами и сборкой"]
     if not (folder / FACTS).is_file():
         return [f"{FACTS} нет: python3 $V/facts.py --out {FACTS}"]
     text = report.read_text(encoding="utf-8")
